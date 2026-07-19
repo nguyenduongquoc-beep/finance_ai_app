@@ -1,0 +1,3 @@
+// Example API keys configuration - DO NOT commit this file.
+// Replace placeholder with your actual Gemini API key.
+const String geminiApiKey = 'YOUR_GEMINI_API_KEY_HERE';

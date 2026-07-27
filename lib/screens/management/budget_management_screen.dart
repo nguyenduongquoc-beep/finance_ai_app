@@ -110,12 +110,46 @@ class BudgetManagementScreen extends StatelessWidget {
             ],
           ),
           actions: [
+            if (budget != null)
+              TextButton(
+                onPressed: () async {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('Xóa ngân sách?'),
+                      content: const Text('Bạn có chắc chắn muốn xóa ngân sách này?'),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+                        TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Xóa', style: TextStyle(color: AppColors.expense))),
+                      ],
+                    ),
+                  );
+                  if (confirm == true) {
+                    await firestoreService.deleteBudget(budget.budgetId);
+                    if (ctx.mounted) Navigator.pop(ctx);
+                  }
+                },
+                child: const Text('Xóa', style: TextStyle(color: AppColors.expense)),
+              ),
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Hủy')),
             TextButton(
               onPressed: () async {
                 final limit = AppFormatters.parseCurrencyInput(limitController.text);
                 if (budget == null) {
                   if (selectedCategory == null) return;
+                  
+                  final existing = await firestoreService.getCategoryBudget(selectedCategory!.categoryId, month: month);
+                  if (existing != null) {
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Ngân sách cho danh mục này trong tháng đã tồn tại. Đang chuyển sang chế độ sửa.'))
+                      );
+                      Navigator.pop(ctx);
+                      _showBudgetDialog(context, firestoreService, uid, month, budget: existing);
+                    }
+                    return;
+                  }
+                  
                   await firestoreService.createBudget(Budget(
                     budgetId: '',
                     userId: uid,

@@ -84,7 +84,68 @@ class _CategoryManagementScreenState extends State<CategoryManagementScreen>
             final c = categories[i];
             return GestureDetector(
               onTap: () => _showCategoryDialog(context, uid, category: c),
-              onLongPress: () => _firestoreService.deleteCategory(c.categoryId),
+              onLongPress: () async {
+                final inUse = await _firestoreService.checkCategoryInUse(c.categoryId);
+                if (!inUse) {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('Xóa danh mục?'),
+                      content: const Text('Bạn có chắc chắn muốn xóa danh mục này? Hành động này không thể hoàn tác.'),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+                        TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Xóa', style: TextStyle(color: AppColors.expense))),
+                      ],
+                    ),
+                  );
+                  if (confirm == true) {
+                    await _firestoreService.deleteCategory(c.categoryId);
+                  }
+                  return;
+                }
+                
+                final defaultCategory = categories.firstWhere((cat) => cat.categoryId != c.categoryId, orElse: () => c);
+                if (defaultCategory.categoryId == c.categoryId) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Không thể xóa danh mục duy nhất đang chứa giao dịch/ngân sách.')));
+                  return;
+                }
+                
+                String? selectedCategoryId = defaultCategory.categoryId;
+                final confirmReassign = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) {
+                    return StatefulBuilder(
+                      builder: (context, setState) => AlertDialog(
+                        title: const Text('Danh mục đang được sử dụng'),
+                        content: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('Danh mục này đang chứa giao dịch hoặc ngân sách. Vui lòng chọn danh mục để chuyển các dữ liệu này sang trước khi xóa:'),
+                            const SizedBox(height: 12),
+                            DropdownButtonFormField<String>(
+                              value: selectedCategoryId,
+                              decoration: const InputDecoration(labelText: 'Chuyển sang', border: OutlineInputBorder()),
+                              items: categories
+                                  .where((cat) => cat.categoryId != c.categoryId)
+                                  .map((cat) => DropdownMenuItem(value: cat.categoryId, child: Text(cat.name)))
+                                  .toList(),
+                              onChanged: (v) => setState(() => selectedCategoryId = v),
+                            ),
+                          ],
+                        ),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+                          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Xóa & Chuyển', style: TextStyle(color: AppColors.expense))),
+                        ],
+                      )
+                    );
+                  }
+                );
+                
+                if (confirmReassign == true && selectedCategoryId != null) {
+                  await _firestoreService.reassignAndDeleteCategory(c.categoryId, selectedCategoryId!);
+                }
+              },
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [

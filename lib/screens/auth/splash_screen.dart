@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/main_navigation.dart';
+import '../setup/profile_setup_screen.dart';
+import '../setup/wallet_setup_screen.dart';
 import 'onboarding_screen.dart';
 
 /// 1. Splash Screen
@@ -26,11 +29,31 @@ class _SplashScreenState extends State<SplashScreen> {
     if (!mounted) return;
 
     final user = FirebaseAuth.instance.currentUser;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => user != null ? const MainNavigation() : const OnboardingScreen(),
-      ),
-    );
+    if (user == null) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+      );
+    } else {
+      final profile = await FirestoreService().getUserProfile(user.uid);
+      if (!mounted) return;
+      if (profile == null) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const ProfileSetupScreen()),
+        );
+      } else {
+        final wallets = await FirestoreService().streamWallets(user.uid).first;
+        if (!mounted) return;
+        if (wallets.isEmpty) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const WalletSetupScreen()),
+          );
+        } else {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const MainNavigation()),
+          );
+        }
+      }
+    }
   }
 
   @override

@@ -77,25 +77,12 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
       final transactions =
           await _firestoreService.streamTransactions(uid, from: last30Days).first;
       final categories = await _firestoreService.streamCategories(uid).first;
-
-      // AI 1: Phân tích thói quen chi tiêu
-      final analysis = await _aiService.analyzeSpendingHabits(
-        transactions: transactions,
-        categories: categories,
-      );
-
-      // AI 3: Dự đoán cuối tháng
       final monthTransactions =
           await _firestoreService.streamTransactions(uid, from: monthStart).first;
+
       final spentSoFar = monthTransactions
           .where((t) => t.type == 'expense')
           .fold<double>(0, (a, t) => a + t.amount);
-
-      final prediction = await _aiService.predictMonthEnd(
-        spentSoFar: spentSoFar,
-        dayOfMonth: now.day,
-        totalDaysInMonth: daysInMonth,
-      );
 
       // Build top 3 categories for cut suggestions
       final Map<String, double> totals = {};
@@ -115,19 +102,56 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
         );
       }).toList();
 
-      // AI 2: Financial trend analysis
-      // Compute monthly spending for last 6 months (including zero months)
+      // Trend analysis data prep — cần fetch giao dịch 6 tháng, KHÔNG dùng biến transactions (chỉ 30 ngày)
+      final sixMonthsAgo = DateTime(now.year, now.month - 5, 1);
+      final trendTransactions =
+          await _firestoreService.streamTransactions(uid, from: sixMonthsAgo).first;
       final List<double> monthlySpending = [];
       for (int i = 5; i >= 0; i--) {
         final month = DateTime(now.year, now.month - i, 1);
         final monthEnd = DateTime(month.year, month.month + 1, 0);
-        final monthTotal = transactions
+        final monthTotal = trendTransactions
             .where((t) => t.type == 'expense' && t.date.isAfter(month.subtract(const Duration(days: 1))) && t.date.isBefore(monthEnd.add(const Duration(days: 1))))
             .fold<double>(0, (a, t) => a + t.amount);
         monthlySpending.add(monthTotal);
       }
-      final trendResult = await _aiService.analyzeTrend(monthlySpending: monthlySpending);
 
+      // Run AI tasks in parallel
+      String analysis = 'Không thể tải phân tích chi tiêu lúc này.';
+      String prediction = 'Không thể tải dự đoán chi tiêu lúc này.';
+      TrendResult? trendResult;
+
+      await Future.wait<dynamic>([
+        _aiService.analyzeSpendingHabits(
+          transactions: transactions,
+          categories: categories,
+        ).timeout(const Duration(seconds: 30)).then((res) {
+          analysis = res;
+        }).catchError((e, stackTrace) {
+          debugPrint('AI Insight (Spending Habits) error: $e');
+          debugPrintStack(stackTrace: stackTrace);
+        }),
+        _aiService.predictMonthEnd(
+          spentSoFar: spentSoFar,
+          dayOfMonth: now.day,
+          totalDaysInMonth: daysInMonth,
+        ).timeout(const Duration(seconds: 30)).then((res) {
+          prediction = res;
+        }).catchError((e, stackTrace) {
+          debugPrint('AI Insight (Month End) error: $e');
+          debugPrintStack(stackTrace: stackTrace);
+        }),
+        _aiService.analyzeTrend(
+          monthlySpending: monthlySpending,
+        ).timeout(const Duration(seconds: 30)).then((res) {
+          trendResult = res;
+        }).catchError((e, stackTrace) {
+          debugPrint('AI Insight (Trend) error: $e');
+          debugPrintStack(stackTrace: stackTrace);
+        }),
+      ]);
+
+      if (!mounted) return;
       setState(() {
         _data = _InsightData(
           spendingAnalysis: analysis,
@@ -137,7 +161,10 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
         );
         _isLoading = false;
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      debugPrint('AI Insight Data Load error: $e');
+      debugPrintStack(stackTrace: stackTrace);
+      if (!mounted) return;
       setState(() {
         _errorMessage = 'Không thể tải phân tích AI lúc này. Vui lòng kiểm tra kết nối và API key.';
         _isLoading = false;
@@ -153,11 +180,13 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
         currentDailyAvg: cut.currentDailyAvg,
         targetDailyAvg: cut.targetDailyAvg,
       );
+      if (!mounted) return;
       setState(() {
         cut.aiSuggestion = suggestion;
         cut.isLoading = false;
       });
     } catch (_) {
+      if (!mounted) return;
       setState(() => cut.isLoading = false);
     }
   }

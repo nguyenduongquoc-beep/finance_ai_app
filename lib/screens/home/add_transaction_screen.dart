@@ -1,6 +1,7 @@
 import 'dart:io';
+import 'dart:typed_data';
 import '../../services/ai_service.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, debugPrint;
 import 'package:permission_handler/permission_handler.dart';
 import '../../models/receipt_info.dart';
 import 'package:flutter/material.dart';
@@ -41,11 +42,12 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   String? _selectedWalletId;
   String? _selectedCategoryId;
   DateTime _selectedDate = DateTime.now();
-  File? _receiptImage;
+  Uint8List? _receiptImageBytes;
   bool _isSaving = false;
   bool _walletBalanceExceeded = false;
   bool _budgetExceeded = false;
   bool _isParsing = false;
+  bool _isValidating = false;
 
   @override
   void dispose() {
@@ -67,7 +69,8 @@ if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTarget
 }
 final picked = await _picker.pickImage(source: source, imageQuality: 70);
     if (picked != null) {
-      setState(() => _receiptImage = File(picked.path));
+      final bytes = await picked.readAsBytes();
+      setState(() => _receiptImageBytes = bytes);
       // After selecting image, automatically parse receipt
       await _parseReceipt();
     }
@@ -75,12 +78,12 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
 
   // Parse receipt image using AI service and pre-fill fields
   Future<void> _parseReceipt() async {
-    if (_receiptImage == null) return;
+    if (_receiptImageBytes == null) return;
     setState(() => _isParsing = true);
     final ai = AiService();
     // API key is configured, proceed with receipt extraction
     try {
-      final info = await ai.extractReceiptInfo(_receiptImage!);
+      final info = await ai.extractReceiptInfo(_receiptImageBytes!);
       if (info != null) {
         // Fill fields with extracted data
         if (info.merchant.isNotEmpty) _noteController.text = info.merchant;
@@ -120,6 +123,7 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
   }
 
   Future<void> _runValidation() async {
+    setState(() => _isValidating = true);
     final amount = AppFormatters.parseCurrencyInput(_amountController.text);
     
     // Nếu là thu nhập (income) thì không bao giờ bị vượt quá số dư ví hay ngân sách chi tiêu
@@ -147,6 +151,7 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
       );
       setState(() => _budgetExceeded = exceed);
     }
+    setState(() => _isValidating = false);
   }
 
   Future<void> _saveAsTemplate() async {
@@ -176,7 +181,7 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
         note: _noteController.text,
         location: _locationController.text,
         date: _selectedDate,
-        imagePath: _receiptImage?.path,
+        imagePath: null,
       );
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã lưu mẫu')));
     }
@@ -202,8 +207,17 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
     setState(() => _isSaving = true);
     try {
       String? imageUrl;
-      if (_receiptImage != null) {
-        imageUrl = await _storageService.uploadReceiptImage(uid, _receiptImage!);
+      if (_receiptImageBytes != null) {
+        try {
+          imageUrl = await _storageService.uploadReceiptImage(uid, _receiptImageBytes!);
+        } catch (e) {
+          debugPrint('⚠️ Upload ảnh hóa đơn thất bại, vẫn tiếp tục lưu giao dịch không kèm ảnh: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Không thể lưu ảnh hóa đơn (lỗi kết nối), giao dịch vẫn được lưu.')),
+            );
+          }
+        }
       }
       final tx = AppTransaction(
         transactionId: '',
@@ -369,7 +383,7 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.camera_alt_outlined),
                 title: Text(
-                  _receiptImage == null
+                  _receiptImageBytes == null
                       ? 'Chụp ảnh hóa đơn'
                       : _isParsing
                           ? 'Đang trích xuất hoá đơn...'
@@ -377,8 +391,8 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
                 ),
                 trailing: _isParsing
                     ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator())
-                    : _receiptImage != null
-                        ? Image.file(_receiptImage!, width: 40, height: 40, fit: BoxFit.cover)
+                    : _receiptImageBytes != null
+                        ? Image.memory(_receiptImageBytes!, width: 40, height: 40, fit: BoxFit.cover)
                         : null,
                 onTap: _pickImage,
                 ),
@@ -389,7 +403,8 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
                   onPressed: () async {
                     final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
                     if (picked != null) {
-                      setState(() => _receiptImage = File(picked.path));
+                      final bytes = await picked.readAsBytes();
+                      setState(() => _receiptImageBytes = bytes);
                       await _parseReceipt();
                     }
                   },
@@ -399,7 +414,7 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
               width: double.infinity,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: accentColor, padding: const EdgeInsets.symmetric(vertical: 14)),
-                onPressed: (_isSaving || _isParsing) ? null : _handleSave,
+                onPressed: (_isSaving || _isParsing || _isValidating) ? null : _handleSave,
                 child: _isSaving
                     ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                     : const Text('Lưu giao dịch', style: TextStyle(color: Colors.white)),

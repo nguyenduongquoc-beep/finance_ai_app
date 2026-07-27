@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
+import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/main_navigation.dart';
 import '../setup/profile_setup_screen.dart';
@@ -51,10 +52,27 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final credential = await _authService.loginWithGoogle();
       if (credential == null || !mounted) return;
-      // Người dùng mới đăng nhập Google lần đầu -> đưa vào thiết lập hồ sơ
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const ProfileSetupScreen()),
-      );
+      
+      final bool isNewUser = credential.additionalUserInfo?.isNewUser ?? false;
+      if (isNewUser) {
+        // Người dùng mới đăng nhập Google lần đầu -> đưa vào thiết lập hồ sơ
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const ProfileSetupScreen()),
+        );
+      } else {
+        // Người dùng cũ -> kiểm tra profile
+        final profile = await FirestoreService().getUserProfile(credential.user!.uid);
+        if (!mounted) return;
+        if (profile == null) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const ProfileSetupScreen()),
+          );
+        } else {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const MainNavigation()),
+          );
+        }
+      }
     } catch (e) {
       setState(() => _errorMessage = 'Đăng nhập Google thất bại.');
     } finally {

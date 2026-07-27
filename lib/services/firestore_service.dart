@@ -62,6 +62,21 @@ class FirestoreService {
     return _db.collection('wallets').doc(walletId).delete();
   }
 
+  Future<bool> checkWalletInUse(String walletId) async {
+    final txQuery = await _db.collection('transactions').where('walletId', isEqualTo: walletId).limit(1).get();
+    return txQuery.docs.isNotEmpty;
+  }
+
+  Future<void> reassignAndDeleteWallet(String oldWalletId, String newWalletId) async {
+    final txQuery = await _db.collection('transactions').where('walletId', isEqualTo: oldWalletId).get();
+    final batch = _db.batch();
+    for (var doc in txQuery.docs) {
+      batch.update(doc.reference, {'walletId': newWalletId});
+    }
+    batch.delete(_db.collection('wallets').doc(oldWalletId));
+    await batch.commit();
+  }
+
   /// Cập nhật số dư ví (dùng khi thêm/sửa/xóa giao dịch)
   Future<void> adjustWalletBalance(String walletId, double delta) {
     return _db.collection('wallets').doc(walletId).update({
@@ -96,6 +111,28 @@ class FirestoreService {
     return _db.collection('categories').doc(categoryId).delete();
   }
 
+  Future<bool> checkCategoryInUse(String categoryId) async {
+    final txQuery = await _db.collection('transactions').where('categoryId', isEqualTo: categoryId).limit(1).get();
+    if (txQuery.docs.isNotEmpty) return true;
+    final budgetQuery = await _db.collection('budgets').where('categoryId', isEqualTo: categoryId).limit(1).get();
+    return budgetQuery.docs.isNotEmpty;
+  }
+
+  Future<void> reassignAndDeleteCategory(String oldCategoryId, String newCategoryId) async {
+    final txQuery = await _db.collection('transactions').where('categoryId', isEqualTo: oldCategoryId).get();
+    final budgetQuery = await _db.collection('budgets').where('categoryId', isEqualTo: oldCategoryId).get();
+    
+    final batch = _db.batch();
+    for (var doc in txQuery.docs) {
+      batch.update(doc.reference, {'categoryId': newCategoryId});
+    }
+    for (var doc in budgetQuery.docs) {
+      batch.update(doc.reference, {'categoryId': newCategoryId});
+    }
+    batch.delete(_db.collection('categories').doc(oldCategoryId));
+    await batch.commit();
+  }
+
   // ---------------- TRANSACTIONS ----------------
   Future<String> createTransaction(AppTransaction tx) async {
     final ref = await _db.collection('transactions').add(tx.toMap());
@@ -118,28 +155,117 @@ class FirestoreService {
         DateTime? from,
         DateTime? to,
       }) {
-    final query = _db
+    Query<Map<String, dynamic>> query = _db
         .collection('transactions')
         .where('userId', isEqualTo: userId);
         
+    if (from != null) {
+      query = query.where('date', isGreaterThanOrEqualTo: from.toIso8601String());
+    }
+    if (to != null) {
+      query = query.where('date', isLessThanOrEqualTo: to.toIso8601String());
+    }
+    
+    // Sort by date descending (Requires Composite Index in Firestore)
+    query = query.orderBy('date', descending: true);
+        
     return query.snapshots().map((snap) {
-      var list = snap.docs.map((d) => AppTransaction.fromMap(d.data(), d.id)).toList();
-      
-      // Filter locally to avoid Firebase Composite Index requirement
-      if (from != null) {
-        list = list.where((t) => !t.date.isBefore(from)).toList();
-      }
-      if (to != null) {
-        list = list.where((t) => !t.date.isAfter(to)).toList();
-      }
-      
-      list.sort((a, b) => b.date.compareTo(a.date));
-      return list;
+      return snap.docs.map((d) => AppTransaction.fromMap(d.data(), d.id)).toList();
     });
   }
 
   Future<void> updateTransaction(String txId, Map<String, dynamic> data) {
     return _db.collection('transactions').doc(txId).update(data);
+  }
+
+  /// Cập nhật giao dịch an toàn, xử lý atomic cả số dư ví và ngân sách
+  Future<void> updateTransactionSafely(
+    AppTransaction oldTx,
+    AppTransaction newTx,
+  ) async {
+    // Để có thể đọc trong transaction, ta query budget refs trước
+    final monthStrOld = DateFormat('MM/yyyy').format(oldTx.date);
+    final monthStrNew = DateFormat('MM/yyyy').format(newTx.date);
+    
+    final oldBudgetQuery = await _db
+        .collection('budgets')
+        .where('categoryId', isEqualTo: oldTx.categoryId)
+        .where('month', isEqualTo: monthStrOld)
+        .limit(1)
+        .get();
+        
+    final newBudgetQuery = await _db
+        .collection('budgets')
+        .where('categoryId', isEqualTo: newTx.categoryId)
+        .where('month', isEqualTo: monthStrNew)
+        .limit(1)
+        .get();
+
+    final DocumentReference? oldBudgetRef = oldBudgetQuery.docs.isNotEmpty ? oldBudgetQuery.docs.first.reference : null;
+    final DocumentReference? newBudgetRef = newBudgetQuery.docs.isNotEmpty ? newBudgetQuery.docs.first.reference : null;
+
+    await _db.runTransaction((txn) async {
+      // 1. Hoàn tác ảnh hưởng của oldTx
+      if (oldTx.type == 'expense') {
+        txn.update(_db.collection('wallets').doc(oldTx.walletId), {
+          'balance': FieldValue.increment(oldTx.amount),
+        });
+        if (oldBudgetRef != null) {
+          txn.update(oldBudgetRef, {
+            'spent': FieldValue.increment(-oldTx.amount),
+          });
+        }
+      } else {
+        txn.update(_db.collection('wallets').doc(oldTx.walletId), {
+          'balance': FieldValue.increment(-oldTx.amount),
+        });
+      }
+
+      // 2. Áp dụng ảnh hưởng của newTx
+      if (newTx.type == 'expense') {
+        txn.update(_db.collection('wallets').doc(newTx.walletId), {
+          'balance': FieldValue.increment(-newTx.amount),
+        });
+        if (newBudgetRef != null) {
+          txn.update(newBudgetRef, {
+            'spent': FieldValue.increment(newTx.amount),
+          });
+        }
+      } else {
+        txn.update(_db.collection('wallets').doc(newTx.walletId), {
+          'balance': FieldValue.increment(newTx.amount),
+        });
+      }
+
+      // 3. Cập nhật transaction doc
+      txn.update(_db.collection('transactions').doc(newTx.transactionId), newTx.toMap());
+    });
+    
+    // Gửi thông báo nếu vượt ngân sách sau khi update
+    if (newTx.type == 'expense') {
+      final updatedBudgetQuery = await _db
+          .collection('budgets')
+          .where('categoryId', isEqualTo: newTx.categoryId)
+          .where('month', isEqualTo: monthStrNew)
+          .limit(1)
+          .get();
+      if (updatedBudgetQuery.docs.isNotEmpty) {
+        final doc = updatedBudgetQuery.docs.first;
+        final limit = (doc.data()['limit'] as num).toDouble();
+        final spent = (doc.data()['spent'] as num).toDouble();
+        if (spent > limit * 0.9 && spent - newTx.amount <= limit * 0.9) {
+          await createNotification(AppNotification(
+            notificationId: '',
+            userId: doc.data()['userId'],
+            title: 'Cảnh báo ngân sách',
+            content: 'Giao dịch vừa sửa đã làm bạn tiêu vượt 90% ngân sách tháng $monthStrNew cho danh mục này.',
+            status: 'unread',
+            type: 'budget',
+            createdAt: DateTime.now(),
+          ));
+        }
+      }
+    }
   }
 
   Future<void> deleteTransaction(AppTransaction tx) async {
@@ -192,9 +318,26 @@ class FirestoreService {
         .limit(1)
         .get();
     if (query.docs.isNotEmpty) {
-      await query.docs.first.reference.update({
+      final doc = query.docs.first;
+      final limit = (doc.data()['limit'] as num).toDouble();
+      final oldSpent = (doc.data()['spent'] as num).toDouble();
+      final newSpent = oldSpent + delta;
+      
+      await doc.reference.update({
         'spent': FieldValue.increment(delta),
       });
+
+      if (delta > 0 && oldSpent <= limit * 0.9 && newSpent > limit * 0.9) {
+        await createNotification(AppNotification(
+          notificationId: '',
+          userId: doc.data()['userId'],
+          title: 'Cảnh báo ngân sách',
+          content: 'Bạn đã tiêu vượt 90% ngân sách tháng $month cho danh mục này.',
+          status: 'unread',
+          type: 'budget',
+          createdAt: DateTime.now(),
+        ));
+      }
     }
   }
 
@@ -246,10 +389,10 @@ class FirestoreService {
     return (data['balance'] as num).toDouble();
   }
 
-  /// Lấy budget cho danh mục trong tháng hiện tại
-  Future<Budget?> getCategoryBudget(String categoryId) async {
+  /// Lấy budget cho danh mục trong tháng hiện tại (hoặc tháng chỉ định)
+  Future<Budget?> getCategoryBudget(String categoryId, {String? month}) async {
     final now = DateTime.now();
-    final monthStr = DateFormat('MM/yyyy').format(now);
+    final monthStr = month ?? DateFormat('MM/yyyy').format(now);
     final query = await _db
         .collection('budgets')
         .where('categoryId', isEqualTo: categoryId)

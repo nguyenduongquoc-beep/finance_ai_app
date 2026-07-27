@@ -8,7 +8,10 @@ import 'package:google_sign_in/google_sign_in.dart';
 /// ============================================================
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final GoogleSignIn _googleSignIn = GoogleSignIn();
+  GoogleSignIn? _googleSignIn;
+  
+  /// Lazy-init để tránh crash trên Web khi chưa có clientId
+  GoogleSignIn get _getGoogleSignIn => _googleSignIn ??= GoogleSignIn();
 
   User? get currentUser => _auth.currentUser;
   Stream<User?> get authStateChanges => _auth.authStateChanges();
@@ -37,7 +40,7 @@ class AuthService {
 
   /// Đăng nhập bằng Google
   Future<UserCredential?> loginWithGoogle() async {
-    final googleUser = await _googleSignIn.signIn();
+    final googleUser = await _getGoogleSignIn.signIn();
     if (googleUser == null) return null; // Người dùng hủy đăng nhập
 
     final googleAuth = await googleUser.authentication;
@@ -55,7 +58,7 @@ class AuthService {
 
   /// Đăng xuất
   Future<void> signOut() async {
-    await _googleSignIn.signOut();
+    await _getGoogleSignIn.signOut();
     await _auth.signOut();
   }
 }

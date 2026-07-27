@@ -68,9 +68,16 @@ class TrendChartCard extends StatelessWidget {
                   bottomTitles: AxisTitles(
                     sideTitles: SideTitles(
                       showTitles: true,
+                      interval: 1, // Bắt buộc — chỉ hiện nhãn tại mỗi giá trị nguyên (mỗi tháng)
                       getTitlesWidget: (value, meta) {
-                        final month = value.toInt() + 1;
-                        return Text('Th${month}', style: const TextStyle(fontSize: 10, color: Colors.black54));
+                        if (value != value.toInt()) return const SizedBox(); // Bỏ qua giá trị không nguyên
+                        final index = value.toInt();
+                        if (index < 0 || index >= trendResult.monthlyAmounts.length) {
+                          return const SizedBox();
+                        }
+                        final now = DateTime.now();
+                        final month = DateTime(now.year, now.month - (trendResult.monthlyAmounts.length - 1 - index), 1);
+                        return Text('Th${month.month}', style: const TextStyle(fontSize: 10, color: Colors.black54));
                       },
                     ),
                   ),

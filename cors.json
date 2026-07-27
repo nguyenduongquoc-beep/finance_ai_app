@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["http://localhost:*", "https://finance-ai-app-6df28.web.app"],
+    "method": ["GET", "POST", "PUT", "DELETE"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": ["Content-Type", "Authorization"]
+  }
+]

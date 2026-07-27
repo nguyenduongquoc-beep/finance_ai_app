@@ -92,8 +92,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     return buffer.toString();
   }
 
-  Future<void> _handleSend() async {
-    final text = _inputController.text.trim();
+  Future<void> _sendMessage(String text) async {
     if (text.isEmpty || _isSending) return;
 
     setState(() {
@@ -114,7 +113,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
         setState(() => _messages.add(_ChatMessage(reply, false)));
         _scrollToBottom();
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      debugPrint('AI Chat error: $e');
+      debugPrintStack(stackTrace: stackTrace);
       if (mounted) {
         setState(() => _messages.add(
               _ChatMessage('Xin lỗi, đã có lỗi xảy ra. Vui lòng thử lại sau.', false),
@@ -123,6 +124,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
     } finally {
       if (mounted) setState(() => _isSending = false);
     }
+  }
+
+  Future<void> _handleSend() async {
+    final text = _inputController.text.trim();
+    await _sendMessage(text);
   }
 
   void _resetChat() {
@@ -206,9 +212,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
           label: Text(suggestions[i], style: const TextStyle(fontSize: 12)),
           backgroundColor: AppColors.aiAccent.withOpacity(0.08),
           side: BorderSide(color: AppColors.aiAccent.withOpacity(0.3)),
-          onPressed: () {
-            _inputController.text = suggestions[i];
-            _handleSend();
+          onPressed: _isSending ? null : () {
+            _sendMessage(suggestions[i]);
           },
         ),
       ),

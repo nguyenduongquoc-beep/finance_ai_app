@@ -36,3 +36,6 @@ GoogleService-Info.plist
 .DS_Store
 Thumbs.db
 lib/config/api_keys.dart
+
+# Kotlin build/cache
+android/.kotlin/

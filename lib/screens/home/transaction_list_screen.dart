@@ -22,6 +22,7 @@ enum _FilterRange { day, week, month }
 class _TransactionListScreenState extends State<TransactionListScreen> {
   final _firestoreService = FirestoreService();
   _FilterRange _filter = _FilterRange.month;
+  bool _showAllHistory = false;
 
   DateTime get _fromDate {
     final now = DateTime.now();
@@ -43,24 +44,33 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('Giao dịch'),
+        actions: [
+          IconButton(
+            icon: Icon(_showAllHistory ? Icons.filter_list : Icons.history),
+            tooltip: _showAllHistory ? 'Lọc theo thời gian' : 'Xem toàn bộ lịch sử',
+            onPressed: () => setState(() => _showAllHistory = !_showAllHistory),
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(52),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
               children: [
-                _filterChip('Ngày', _FilterRange.day),
+                _filterChip('Hôm nay', _FilterRange.day),
                 const SizedBox(width: 8),
-                _filterChip('Tuần', _FilterRange.week),
+                _filterChip('7 ngày qua', _FilterRange.week),
                 const SizedBox(width: 8),
-                _filterChip('Tháng', _FilterRange.month),
+                _filterChip('Tháng này', _FilterRange.month),
               ],
             ),
           ),
         ),
       ),
       body: StreamBuilder<List<AppTransaction>>(
-        stream: _firestoreService.streamTransactions(uid, from: _fromDate),
+        stream: _showAllHistory 
+            ? _firestoreService.streamTransactions(uid) 
+            : _firestoreService.streamTransactions(uid, from: _fromDate),
         builder: (context, txSnap) {
           if (txSnap.hasError) return StreamErrorWidget(error: txSnap.error.toString());
           final transactions = txSnap.data ?? [];

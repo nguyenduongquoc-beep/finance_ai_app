@@ -1,9 +1,7 @@
-import 'dart:io';
 import 'dart:typed_data';
 import '../../services/ai_service.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, debugPrint;
 import 'package:permission_handler/permission_handler.dart';
-import '../../models/receipt_info.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
@@ -79,16 +77,34 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
   // Parse receipt image using AI service and pre-fill fields
   Future<void> _parseReceipt() async {
     if (_receiptImageBytes == null) return;
+    // Clear note and location before filling new data
+    _noteController.clear();
+    _locationController.clear();
     setState(() => _isParsing = true);
     final ai = AiService();
-    // API key is configured, proceed with receipt extraction
     try {
       final info = await ai.extractReceiptInfo(_receiptImageBytes!);
       if (info != null) {
-        // Fill fields with extracted data
-        if (info.merchant.isNotEmpty) _noteController.text = info.merchant;
-        if (info.total > 0) _amountController.text = AppFormatters.number(info.total);
-        if (info.date != null) _selectedDate = info.date!;
+        // Fill controllers with extracted receipt info
+        if (info.total > 0) {
+          _amountController.text = AppFormatters.number(info.total);
+        }
+        if (info.date != null) {
+          _selectedDate = info.date!;
+        }
+        // Note: prioritize items, fall back to merchant name
+        if (info.items != null && info.items!.isNotEmpty) {
+          final itemLines = info.items!
+              .map((it) => '${it.description}: ${AppFormatters.number(it.amount)}đ')
+              .join('\n');
+          _noteController.text = itemLines;
+        } else if (info.merchant.isNotEmpty) {
+          _noteController.text = info.merchant;
+        }
+        // Location (address)
+        if (info.address != null && info.address!.isNotEmpty) {
+          _locationController.text = info.address!;
+        }
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã trích xuất thông tin hoá đơn')));
       } else {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Không thể trích xuất thông tin hoá đơn')));
@@ -124,34 +140,45 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
 
   Future<void> _runValidation() async {
     setState(() => _isValidating = true);
-    final amount = AppFormatters.parseCurrencyInput(_amountController.text);
-    
-    // Nếu là thu nhập (income) thì không bao giờ bị vượt quá số dư ví hay ngân sách chi tiêu
-    if (_type == 'income') {
+    try {
+      final amount = AppFormatters.parseCurrencyInput(_amountController.text);
+      
+      // Nếu là thu nhập (income) thì không bao giờ bị vượt quá số dư ví hay ngân sách chi tiêu
+      if (_type == 'income') {
+        setState(() {
+          _walletBalanceExceeded = false;
+          _budgetExceeded = false;
+        });
+        return;
+      }
+
+      if (_selectedWalletId != null) {
+        final exceed = await ValidationUtils.exceedsWalletBalance(
+          walletId: _selectedWalletId!,
+          amount: amount,
+          firestoreService: _firestoreService,
+        );
+        setState(() => _walletBalanceExceeded = exceed);
+      }
+      if (_selectedCategoryId != null) {
+        final exceed = await ValidationUtils.exceedsCategoryBudget(
+          categoryId: _selectedCategoryId!,
+          amount: amount,
+          firestoreService: _firestoreService,
+        );
+        setState(() => _budgetExceeded = exceed);
+      }
+    } catch (e) {
+      debugPrint('⚠️ Lỗi khi kiểm tra vượt số dư ví/ngân sách: $e');
       setState(() {
         _walletBalanceExceeded = false;
         _budgetExceeded = false;
       });
-      return;
+    } finally {
+      if (mounted) {
+        setState(() => _isValidating = false);
+      }
     }
-
-    if (_selectedWalletId != null) {
-      final exceed = await ValidationUtils.exceedsWalletBalance(
-        walletId: _selectedWalletId!,
-        amount: amount,
-        firestoreService: _firestoreService,
-      );
-      setState(() => _walletBalanceExceeded = exceed);
-    }
-    if (_selectedCategoryId != null) {
-      final exceed = await ValidationUtils.exceedsCategoryBudget(
-        categoryId: _selectedCategoryId!,
-        amount: amount,
-        firestoreService: _firestoreService,
-      );
-      setState(() => _budgetExceeded = exceed);
-    }
-    setState(() => _isValidating = false);
   }
 
   Future<void> _saveAsTemplate() async {
@@ -214,7 +241,7 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
           debugPrint('⚠️ Upload ảnh hóa đơn thất bại, vẫn tiếp tục lưu giao dịch không kèm ảnh: $e');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Không thể lưu ảnh hóa đơn (lỗi kết nối), giao dịch vẫn được lưu.')),
+              const SnackBar(content: Text('Không thể lưu ảnh hóa đơn (lỗi kết nối), đang tiếp tục lưu giao dịch...')),
             );
           }
         }
@@ -234,6 +261,13 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
       await _firestoreService.createTransaction(tx);
       if (!mounted) return;
       Navigator.of(context).pop();
+    } catch (e) {
+      debugPrint('❌ Lỗi khi lưu giao dịch: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Không thể lưu giao dịch. Vui lòng kiểm tra kết nối mạng và thử lại.')),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -283,6 +317,10 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
                                   setState(() {
                                     _type = tmpl.type;
                                     _amountController.text = AppFormatters.number(tmpl.amount);
+                                    _selectedWalletId = tmpl.walletId.isNotEmpty ? tmpl.walletId : null;
+                                    _selectedCategoryId = tmpl.categoryId.isNotEmpty ? tmpl.categoryId : null;
+                                    _noteController.text = tmpl.note;
+                                    _locationController.text = tmpl.location;
                                   });
                                   await _runValidation();
                                 },
@@ -335,18 +373,21 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
             ),
             const SizedBox(height: 16),
             StreamBuilder<List<Category>>(
-              stream: _firestoreService.streamCategories(uid, type: _type),
+              stream: _firestoreService.streamCategories(uid),
               builder: (context, snap) {
                 if (snap.hasError) return StreamErrorWidget(error: snap.error.toString());
-                final categories = snap.data ?? [];
+                final allCategories = snap.data ?? [];
+                final categories = allCategories.where((c) => c.type == _type).toList();
                 
-                // Tránh lỗi DropdownButton nếu id không tồn tại trong danh sách mới
-                if (_selectedCategoryId != null && !categories.any((c) => c.categoryId == _selectedCategoryId)) {
+                // Kiểm tra tồn tại dựa trên TOÀN BỘ danh mục (không phụ thuộc _type),
+                // để đổi _type không làm mất lựa chọn hợp lệ đang có
+                if (_selectedCategoryId != null &&
+                    !allCategories.any((c) => c.categoryId == _selectedCategoryId)) {
                   _selectedCategoryId = null;
                 }
 
                 return DropdownButtonFormField<String>(
-                  value: _selectedCategoryId,
+                  value: categories.any((c) => c.categoryId == _selectedCategoryId) ? _selectedCategoryId : null,
                   decoration: const InputDecoration(labelText: 'Danh mục', prefixIcon: Icon(Icons.category_outlined)),
                   items: categories.map((c) => DropdownMenuItem(value: c.categoryId, child: Text(c.name))).toList(),
                   onChanged: (v) async {
@@ -364,7 +405,13 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
             const SizedBox(height: 16),
             TextField(
               controller: _noteController,
-              decoration: const InputDecoration(labelText: 'Ghi chú', prefixIcon: Icon(Icons.notes_outlined)),
+              maxLines: null,
+              minLines: 1,
+              decoration: const InputDecoration(
+                labelText: 'Ghi chú',
+                prefixIcon: Icon(Icons.notes_outlined),
+                alignLabelWithHint: true,
+              ),
             ),
             const SizedBox(height: 16),
             TextField(
@@ -432,6 +479,18 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
       onPressed: () => setState(() {
         _type = type;
         _selectedCategoryId = null;
+        _selectedWalletId = null;
+        // Reset form fields when switching between expense/income
+        _amountController.clear();
+        _noteController.clear();
+        _locationController.clear();
+        _receiptImageBytes = null;
+        // Do NOT reset selected date; keep user's chosen date
+        _walletBalanceExceeded = false;
+        _budgetExceeded = false;
+        _isSaving = false;
+        _isParsing = false;
+        _isValidating = false;
       }),
       style: OutlinedButton.styleFrom(
         backgroundColor: selected ? color.withOpacity(0.12) : null,

@@ -104,7 +104,7 @@ flutter run
 ⏳ Cần làm tiếp (xem PROGRESS.md):
 - Chạy `flutterfire configure` để kết nối Firebase project thật
 - Điền Gemini API key thật
-- AI 2 (phân tích xu hướng tài chính) và AI 7 (OCR hóa đơn) chưa triển khai
+- AI 2 (phân tích xu hướng tài chính) chưa triển khai
 - Xuất báo cáo PDF (AI Report Screen) chưa triển khai
 - Firebase Cloud Messaging cho nhắc nhở hóa đơn chưa tích hợp
 - Dark Mode / đổi ngôn ngữ ở Profile Screen mới là placeholder

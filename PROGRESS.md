@@ -7,7 +7,7 @@
 - [x] AuthService (Email/Password + Google Sign-In + Quên mật khẩu)
 - [x] FirestoreService (CRUD đầy đủ cho tất cả collections)
 - [x] StorageService (upload ảnh hóa đơn + avatar)
-- [x] AiService (Gemini API) — AI 1, 3, 4, 5, 6 đã có; AI 2 và AI 7 (OCR) chưa làm
+- [x] AiService (Gemini API) — AI 1, 2, 3, 4, 5, 6, 7 đã có (AI 7: ML Kit on-device OCR + Gemini structured extraction)
 - [x] 21 màn hình theo 6 module trong tài liệu đề tài
 - [x] Bottom Navigation 5 tab + nút "+" nổi
 - [x] Biểu đồ cột + tròn (fl_chart) cho Dashboard
@@ -19,7 +19,7 @@
 - [ ] Điền Gemini API key thật vào `ai_service.dart` (hoặc chuyển sang Cloud Functions proxy)
 - [ ] Cấu hình Google Sign-In: thêm SHA-1/SHA-256 vào Firebase Console
 - [ ] AI 2: Phân tích xu hướng tài chính (biểu đồ xu hướng qua nhiều tháng)
-- [ ] AI 7: OCR hóa đơn (Google ML Kit) — tự động nhận diện cửa hàng, ngày, tổng tiền
+- [x] AI 7: OCR hóa đơn — đã tích hợp Google ML Kit Text Recognition (on-device) kết hợp Gemini (structured extraction). Fallback gửi ảnh thẳng cho Gemini nếu ML Kit không nhận diện được text.
 - [ ] Xuất báo cáo PDF ở AI Report Screen (package `pdf` + `printing`)
 - [ ] Firebase Cloud Messaging: nhắc nhở hóa đơn định kỳ (điện, nước, Internet, thuê nhà)
 - [ ] Dark Mode thật (ThemeProvider) — hiện tại là placeholder switch

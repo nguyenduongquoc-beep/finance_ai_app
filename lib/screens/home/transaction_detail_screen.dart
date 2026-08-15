@@ -3,6 +3,7 @@ import '../../models/transaction_model.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
 import '../../utils/formatters.dart';
+import 'dart:io';
 
 /// 12. Chi tiết giao dịch - cho phép Sửa / Xóa / Xem ảnh đính kèm
 class TransactionDetailScreen extends StatelessWidget {
@@ -75,7 +76,18 @@ class TransactionDetailScreen extends StatelessWidget {
               const SizedBox(height: 8),
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Image.network(transaction.image!, height: 200, fit: BoxFit.cover),
+                child: Image.file(
+                File(transaction.image!),
+                height: 200,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  height: 200,
+                  color: Colors.grey.shade200,
+                  child: const Center(
+                    child: Icon(Icons.broken_image_outlined, color: Colors.grey, size: 40),
+                  ),
+                ),
+              ),
               ),
             ],
           ],

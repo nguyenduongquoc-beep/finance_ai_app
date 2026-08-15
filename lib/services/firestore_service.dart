@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 import '../models/user_model.dart';
 import '../models/wallet_model.dart';
 import '../models/category_model.dart';
@@ -6,7 +7,7 @@ import '../models/transaction_model.dart';
 import '../models/budget_model.dart';
 import '../models/saving_goal_model.dart';
 import '../models/notification_model.dart';
-import 'package:intl/intl.dart';
+import 'storage_service.dart';
 
 /// ============================================================
 /// FIRESTORE SERVICE
@@ -135,19 +136,72 @@ class FirestoreService {
 
   // ---------------- TRANSACTIONS ----------------
   Future<String> createTransaction(AppTransaction tx) async {
-    final ref = await _db.collection('transactions').add(tx.toMap());
-    
-    // 1. Cập nhật số dư ví tương ứng
-    final delta = tx.type == 'income' ? tx.amount : -tx.amount;
-    await adjustWalletBalance(tx.walletId, delta);
-    
-    // 2. Cập nhật số tiền đã tiêu trong ngân sách (nếu là chi tiêu)
+    // Create a reference for the new transaction document (not yet written)
+    final txRef = _db.collection('transactions').doc();
+    final walletRef = _db.collection('wallets').doc(tx.walletId);
+
+    DocumentReference? budgetRef;
+    final monthStr = DateFormat('MM/yyyy').format(tx.date);
     if (tx.type == 'expense') {
-      final monthStr = DateFormat('MM/yyyy').format(tx.date);
-      await adjustBudgetSpent(tx.categoryId, monthStr, tx.amount);
+      final budgetQuery = await _db
+          .collection('budgets')
+          .where('categoryId', isEqualTo: tx.categoryId)
+          .where('month', isEqualTo: monthStr)
+          .limit(1)
+          .get();
+      if (budgetQuery.docs.isNotEmpty) {
+        budgetRef = budgetQuery.docs.first.reference;
+      }
     }
-    
-    return ref.id;
+
+    await _db.runTransaction((transaction) async {
+      // Read wallet (required before write in Firestore transaction)
+      final walletSnap = await transaction.get(walletRef);
+      if (!walletSnap.exists) {
+        throw Exception('Ví không tồn tại');
+      }
+      DocumentSnapshot? budgetSnap;
+      if (budgetRef != null) {
+        budgetSnap = await transaction.get(budgetRef);
+      }
+
+      // Write transaction document
+      transaction.set(txRef, tx.toMap());
+
+      // Update wallet balance
+      final delta = tx.type == 'income' ? tx.amount : -tx.amount;
+      final currentBalance = (walletSnap.data() as Map<String, dynamic>)['balance'] as num;
+      transaction.update(walletRef, {'balance': currentBalance + delta});
+
+      // Update budget spent if applicable
+      if (budgetRef != null && budgetSnap != null && budgetSnap.exists) {
+        final currentSpent = (budgetSnap.data() as Map<String, dynamic>)['spent'] as num;
+        transaction.update(budgetRef, {'spent': currentSpent + tx.amount});
+      }
+    });
+
+    // After transaction commits, check for budget warning (outside transaction)
+    if (tx.type == 'expense' && budgetRef != null) {
+      final updatedBudget = await budgetRef.get();
+      final data = updatedBudget.data() as Map<String, dynamic>?;
+      if (data != null) {
+        final limit = (data['limit'] as num).toDouble();
+        final spent = (data['spent'] as num).toDouble();
+        if (spent > limit * 0.9 && spent - tx.amount <= limit * 0.9) {
+          await createNotification(AppNotification(
+            notificationId: '',
+            userId: data['userId'],
+            title: 'Cảnh báo ngân sách',
+            content: 'Bạn đã tiêu vượt 90% ngân sách tháng $monthStr cho danh mục này.',
+            status: 'unread',
+            type: 'budget',
+            createdAt: DateTime.now(),
+          ));
+        }
+      }
+    }
+
+    return txRef.id;
   }
 
   Stream<List<AppTransaction>> streamTransactions(
@@ -270,15 +324,24 @@ class FirestoreService {
 
   Future<void> deleteTransaction(AppTransaction tx) async {
     await _db.collection('transactions').doc(tx.transactionId).delete();
-    
+
     // 1. Hoàn lại số dư ví
     final delta = tx.type == 'income' ? -tx.amount : tx.amount;
     await adjustWalletBalance(tx.walletId, delta);
-    
+
     // 2. Hoàn lại số tiền đã tiêu trong ngân sách (nếu là chi tiêu)
     if (tx.type == 'expense') {
       final monthStr = DateFormat('MM/yyyy').format(tx.date);
       await adjustBudgetSpent(tx.categoryId, monthStr, -tx.amount);
+    }
+
+    // 3. Xóa ảnh local nếu có
+    if (tx.image != null && tx.image!.isNotEmpty) {
+      try {
+        await StorageService().deleteImageByUrl(tx.image!);
+      } catch (_) {
+        // ignore errors
+      }
     }
   }
 

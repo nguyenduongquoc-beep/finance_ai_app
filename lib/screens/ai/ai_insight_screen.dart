@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../../models/transaction_model.dart';
-import '../../models/category_model.dart';
+import '../../models/financial_issue.dart';
 import '../../services/firestore_service.dart';
 import '../../services/ai_service.dart';
+import '../../services/financial_analytics_service.dart';
 import '../../utils/constants.dart';
 import '../../utils/formatters.dart';
 import '../../models/trend_result.dart';
@@ -22,12 +22,19 @@ class _InsightData {
   final String monthEndPrediction;
   final List<_CategoryCut> topCuts;
   final TrendResult? trendResult;
+  // MỚI — Financial Analytics Layer
+  final int healthScore;
+  final List<FinancialIssue> issues;
+  final String aiSuggestionForIssues;
 
   _InsightData({
     required this.spendingAnalysis,
     required this.monthEndPrediction,
     required this.topCuts,
     this.trendResult,
+    required this.healthScore,
+    required this.issues,
+    required this.aiSuggestionForIssues,
   });
 }
 
@@ -36,20 +43,19 @@ class _CategoryCut {
   final double currentDailyAvg;
   final double targetDailyAvg;
   String? aiSuggestion;
-  bool isLoading;
+  bool isLoading = false;
 
   _CategoryCut({
     required this.categoryName,
     required this.currentDailyAvg,
     required this.targetDailyAvg,
-    this.aiSuggestion,
-    this.isLoading = false,
   });
 }
 
 class _AiInsightScreenState extends State<AiInsightScreen> {
   final _aiService = AiService();
   final _firestoreService = FirestoreService();
+  final _analyticsService = FinancialAnalyticsService();
 
   _InsightData? _data;
   bool _isLoading = true;
@@ -73,12 +79,34 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
     final last30Days = now.subtract(const Duration(days: 30));
     final daysInMonth = DateTime(now.year, now.month + 1, 0).day;
 
+    // Tính khoảng thời gian tháng trước để so sánh
+    final lastMonthStart = DateTime(now.year, now.month - 1, 1);
+    final lastMonthEnd = DateTime(now.year, now.month, 0, 23, 59, 59);
+
     try {
       final transactions =
           await _firestoreService.streamTransactions(uid, from: last30Days).first;
       final categories = await _firestoreService.streamCategories(uid).first;
       final monthTransactions =
           await _firestoreService.streamTransactions(uid, from: monthStart).first;
+
+      // Fetch giao dịch tháng trước để so sánh (Financial Analytics Layer)
+      final lastMonthTransactions = await _firestoreService
+          .streamTransactions(uid, from: lastMonthStart, to: lastMonthEnd)
+          .first;
+
+      // Lấy thông tin user để có monthlyIncome
+      final userProfile = await _firestoreService.getUserProfile(uid);
+      final monthlyIncome = userProfile?.monthlyIncome ?? 0;
+
+      // --- Financial Analytics Layer (Dart thuần, KHÔNG gọi AI) ---
+      final issues = _analyticsService.detectIssues(
+        currentMonthTx: monthTransactions,
+        lastMonthTx: lastMonthTransactions,
+        categories: categories,
+        monthlyIncome: monthlyIncome,
+      );
+      final healthScore = _analyticsService.calculateHealthScore(issues);
 
       final spentSoFar = monthTransactions
           .where((t) => t.type == 'expense')
@@ -116,9 +144,10 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
         monthlySpending.add(monthTotal);
       }
 
-      // Run AI tasks in parallel
+      // Run AI tasks in parallel (bao gồm cả AI giải thích vấn đề mới)
       String analysis = 'Không thể tải phân tích chi tiêu lúc này.';
       String prediction = 'Không thể tải dự đoán chi tiêu lúc này.';
+      String aiSuggestionForIssues = '';
       TrendResult? trendResult;
 
       await Future.wait<dynamic>([
@@ -149,6 +178,17 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
           debugPrint('AI Insight (Trend) error: $e');
           debugPrintStack(stackTrace: stackTrace);
         }),
+        // MỚI: Gọi AI giải thích + đề xuất cho các vấn đề đã phát hiện
+        _aiService.explainAndSuggestForIssues(issues)
+            .timeout(const Duration(seconds: 30)).then((res) {
+          aiSuggestionForIssues = res;
+        }).catchError((e, stackTrace) {
+          debugPrint('AI Insight (Issue Suggestions) error: $e');
+          debugPrintStack(stackTrace: stackTrace);
+          aiSuggestionForIssues = issues.isEmpty
+              ? 'Chúc mừng bạn! Chưa phát hiện vấn đề tài chính đáng chú ý nào trong tháng này.'
+              : 'Không thể tải đề xuất AI lúc này.';
+        }),
       ]);
 
       if (!mounted) return;
@@ -158,6 +198,9 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
           monthEndPrediction: prediction,
           topCuts: topCuts,
           trendResult: trendResult,
+          healthScore: healthScore,
+          issues: issues,
+          aiSuggestionForIssues: aiSuggestionForIssues,
         );
         _isLoading = false;
       });
@@ -267,6 +310,18 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // === MỚI: Điểm sức khỏe tài chính ===
+        _buildHealthScoreCard(data.healthScore),
+        const SizedBox(height: 16),
+        // === MỚI: Danh sách vấn đề phát hiện ===
+        if (data.issues.isNotEmpty) ...[
+          _buildIssuesList(data.issues),
+          const SizedBox(height: 16),
+        ],
+        // === MỚI: Đề xuất từ AI cho các vấn đề ===
+        _buildAiSuggestionCard(data.aiSuggestionForIssues, data.issues.isEmpty),
+        const SizedBox(height: 16),
+        // === GIỮ NGUYÊN: Các tính năng cũ ===
         if (data.trendResult != null) ...[
           TrendChartCard(trendResult: data.trendResult!),
           const SizedBox(height: 16),
@@ -293,6 +348,304 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
     );
   }
 
+  // ============================================================
+  // MỚI — HEALTH SCORE CARD
+  // ============================================================
+  Widget _buildHealthScoreCard(int score) {
+    // Màu theo mức: xanh ≥70, vàng 40-69, đỏ <40
+    final Color scoreColor;
+    final String scoreLabel;
+    final IconData scoreIcon;
+    if (score >= 70) {
+      scoreColor = AppColors.income;
+      scoreLabel = 'Tốt';
+      scoreIcon = Icons.sentiment_very_satisfied;
+    } else if (score >= 40) {
+      scoreColor = AppColors.warning;
+      scoreLabel = 'Cần chú ý';
+      scoreIcon = Icons.sentiment_neutral;
+    } else {
+      scoreColor = AppColors.expense;
+      scoreLabel = 'Cần cải thiện';
+      scoreIcon = Icons.sentiment_very_dissatisfied;
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [scoreColor.withOpacity(0.12), scoreColor.withOpacity(0.04)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scoreColor.withOpacity(0.25)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          children: [
+            // Số điểm lớn
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: scoreColor.withOpacity(0.15),
+                shape: BoxShape.circle,
+                border: Border.all(color: scoreColor, width: 3),
+              ),
+              child: Center(
+                child: Text(
+                  '$score',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: scoreColor,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Điểm sức khỏe tài chính',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(scoreIcon, size: 18, color: scoreColor),
+                      const SizedBox(width: 4),
+                      Text(
+                        scoreLabel,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: scoreColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  // Thanh tiến trình
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: score / 100,
+                      minHeight: 6,
+                      backgroundColor: scoreColor.withOpacity(0.15),
+                      valueColor: AlwaysStoppedAnimation<Color>(scoreColor),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // MỚI — DANH SÁCH VẤN ĐỀ PHÁT HIỆN
+  // ============================================================
+  Widget _buildIssuesList(List<FinancialIssue> issues) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          )
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.warning.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.warning_amber_rounded,
+                      color: AppColors.warning, size: 20),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text('Vấn đề phát hiện',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppColors.expense.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${issues.length}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.expense,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 8),
+            ...issues.map((issue) => _buildIssueItem(issue)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIssueItem(FinancialIssue issue) {
+    final isCritical = issue.severity == IssueSeverity.critical;
+    final severityColor = isCritical ? AppColors.expense : AppColors.warning;
+    final severityLabel = isCritical ? 'Nghiêm trọng' : 'Cảnh báo';
+    final severityIcon = isCritical ? Icons.error : Icons.warning_amber_rounded;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: severityColor.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: severityColor.withOpacity(0.2)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(severityIcon, size: 20, color: severityColor),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        issue.title,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: severityColor.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        severityLabel,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: severityColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  issue.description,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // MỚI — ĐỀ XUẤT TỪ AI
+  // ============================================================
+  Widget _buildAiSuggestionCard(String suggestion, bool noIssues) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          )
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: (noIssues ? AppColors.income : AppColors.aiAccent)
+                        .withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    noIssues ? Icons.check_circle_outline : Icons.auto_awesome,
+                    color: noIssues ? AppColors.income : AppColors.aiAccent,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    noIssues ? 'Tình hình tài chính' : 'Đề xuất từ AI',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            Text(suggestion,
+                style: const TextStyle(
+                    height: 1.6, color: AppColors.textPrimary)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // GIỮ NGUYÊN — Các widget cũ
+  // ============================================================
   Widget _insightCard({
     required IconData icon,
     required String title,

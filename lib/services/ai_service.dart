@@ -1,8 +1,12 @@
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'dart:io';
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:path_provider/path_provider.dart' show getTemporaryDirectory;
 import 'dart:typed_data';
 import 'dart:convert';
 import '../models/receipt_info.dart';
+import '../models/financial_issue.dart';
 import '../models/trend_result.dart';
 import '../models/transaction_model.dart';
 import '../models/category_model.dart';
@@ -191,22 +195,43 @@ $monthlySavings đồng. Viết một gợi ý ngắn gọn, thực tế bằng 
   }
 
   /// AI 7: OCR trích xuất thông tin hoá đơn
+  /// Kiến trúc: ML Kit (on-device) → raw text → Gemini (structured extraction)
+  /// Fallback: nếu ML Kit không nhận diện được text → gửi ảnh thẳng cho Gemini
   Future<ReceiptInfo?> extractReceiptInfo(Uint8List imageBytes) async {
     try {
-      // Build prompt
-      const prompt = '''
+      // Bước 1: Thử nhận diện text on-device bằng ML Kit
+      final rawText = await _recognizeTextOnDevice(imageBytes);
+
+      GenerateContentResponse response;
+
+      if (rawText != null && rawText.trim().isNotEmpty) {
+        // Bước 2a: Có raw text từ ML Kit → gửi text cho Gemini parse cấu trúc
+        debugPrint('🔧 ML Kit OCR thành công, gửi raw text cho Gemini để parse cấu trúc');
+        final prompt = '''
+Dưới đây là văn bản được trích xuất từ ảnh hóa đơn bằng OCR (có thể còn nhiễu/sai sót):
+---
+$rawText
+---
+Hãy phân tích và trả về JSON gồm: merchant (tên cửa hàng), total (tổng tiền, số), date (ngày, ISO string hoặc null), address (địa chỉ nếu có), items (mảng các đối tượng gồm description và amount). Chỉ trả về JSON thuần túy, không markdown fence.''';
+        response = await _generateWithFallback([Content.text(prompt)]);
+      } else {
+        // Bước 2b: ML Kit không nhận diện được → fallback gửi ảnh thẳng cho Gemini
+        debugPrint('🔧 ML Kit không nhận diện được text, fallback gửi ảnh cho Gemini');
+        const prompt = '''
 Bạn là trợ lý tài chính. Hãy trích xuất các thông tin sau từ hoá đơn (ngôn ngữ tiếng Việt):
 - Tên cửa hàng/merchant
 - Tổng số tiền (đồng)
 - Ngày giao dịch (dd/MM/yyyy) nếu có
-Trả về kết quả dưới dạng JSON có các trường: merchant, total, date (ISO string hoặc null).
-Chỉ trả về JSON thuần túy, không bọc trong markdown code block, không thêm giải thích.''';
-      // Create multipart content
-      final content = Content.multi([
-        TextPart(prompt),
-        DataPart('image/jpeg', imageBytes),
-      ]);
-      final response = await _generateWithFallback([content]);
+- Địa chỉ (address) nếu có
+- Các mục (items) dưới dạng mảng, mỗi mục có description và amount
+Chỉ trả về kết quả dưới dạng JSON có các trường: merchant, total, date (ISO string hoặc null), address, items. Không bọc trong markdown code block, không thêm giải thích.''';
+        final content = Content.multi([
+          TextPart(prompt),
+          DataPart('image/jpeg', imageBytes),
+        ]);
+        response = await _generateWithFallback([content]);
+      }
+
       if (response.text == null) return null;
       final cleanedText = _stripMarkdownCodeFence(response.text!);
       final Map<String, dynamic> data = jsonDecode(cleanedText);
@@ -215,6 +240,69 @@ Chỉ trả về JSON thuần túy, không bọc trong markdown code block, khô
       debugPrint('OCR Receipt extraction error: $e');
       return null;
     }
+  }
+
+  /// Nhận diện text on-device bằng Google ML Kit Text Recognition.
+  /// Trả về raw text hoặc null nếu không nhận diện được / lỗi.
+  Future<String?> _recognizeTextOnDevice(Uint8List imageBytes) async {
+    // ML Kit on-device không hỗ trợ Flutter Web
+    if (kIsWeb) {
+      debugPrint('🔧 ML Kit không hỗ trợ trên Flutter Web, bỏ qua bước OCR on-device');
+      return null;
+    }
+
+    final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
+    File? tempFile;
+    try {
+      // Lưu tạm file vì InputImage.fromBytes yêu cầu metadata (size, rotation)
+      // mà không phải lúc nào cũng có sẵn từ Uint8List thuần túy.
+      // InputImage.fromFilePath là cách ổn định nhất trên cả Android/iOS.
+      final tempDir = await getTemporaryDirectory();
+      tempFile = File('${tempDir.path}/receipt_ocr_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      await tempFile.writeAsBytes(imageBytes);
+
+      final inputImage = InputImage.fromFilePath(tempFile.path);
+      final recognizedText = await textRecognizer.processImage(inputImage);
+
+      debugPrint('🔧 ML Kit nhận diện được ${recognizedText.blocks.length} block(s), '
+          'tổng ${recognizedText.text.length} ký tự');
+
+      return recognizedText.text.isEmpty ? null : recognizedText.text;
+    } catch (e) {
+      debugPrint('⚠️ ML Kit TextRecognizer lỗi, sẽ fallback sang gửi ảnh cho Gemini: $e');
+      return null;
+    } finally {
+      // Dọn file tạm
+      if (tempFile != null && await tempFile.exists()) {
+        await tempFile.delete();
+      }
+      // Luôn close để giải phóng tài nguyên native
+      textRecognizer.close();
+    }
+  }
+
+  /// AI Insight nâng cao: nhận danh sách vấn đề ĐÃ PHÁT HIỆN SẴN (bằng
+  /// FinancialAnalyticsService), yêu cầu Gemini giải thích nguyên nhân và
+  /// đề xuất phương án — KHÔNG đưa dữ liệu thô, không để Gemini tự tính %.
+  Future<String> explainAndSuggestForIssues(List<FinancialIssue> issues) async {
+    if (issues.isEmpty) {
+      return 'Chúc mừng bạn! Chưa phát hiện vấn đề tài chính đáng chú ý nào trong tháng này.';
+    }
+    final issuesText = issues.map((i) => '- ${i.title}: ${i.description}').join('\n');
+    final prompt = '''
+Bạn là trợ lý tài chính cá nhân. Hệ thống đã PHÁT HIỆN SẴN các vấn đề tài chính
+sau đây (dựa trên phân tích số liệu, không cần bạn tính toán lại):
+
+$issuesText
+
+Với MỖI vấn đề, hãy viết ngắn gọn (1-2 câu):
+1. Nguyên nhân có thể (dựa trên loại vấn đề)
+2. Đề xuất phương án cải thiện CÓ SỐ LIỆU CỤ THỂ (VD "giảm xuống còn X đồng/tháng")
+
+Trả lời bằng tiếng Việt, giọng thân thiện, đi thẳng vào từng vấn đề.
+''';
+    final response = await _generateWithFallback([Content.text(prompt)]);
+    return response.text ?? 'Không thể tạo đề xuất lúc này.';
   }
 
   String _stripMarkdownCodeFence(String text) {

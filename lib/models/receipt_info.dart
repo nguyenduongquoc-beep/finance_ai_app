@@ -1,4 +1,5 @@
 class ReceiptInfo {
+  final String? address;
   final String merchant;
   final double total;
   final DateTime? date;
@@ -10,6 +11,7 @@ class ReceiptInfo {
     required this.total,
     this.date,
     this.taxId,
+    this.address,
     this.items,
   });
 
@@ -19,6 +21,7 @@ class ReceiptInfo {
       total: (json['total'] as num?)?.toDouble() ?? 0.0,
       date: json['date'] != null ? DateTime.parse(json['date'] as String) : null,
       taxId: json['taxId'] as String?,
+      address: json['address'] as String?,
       items: json['items'] != null
           ? (json['items'] as List)
               .map((e) => ReceiptItem.fromJson(e as Map<String, dynamic>))
@@ -33,6 +36,7 @@ class ReceiptInfo {
       'total': total,
       'date': date?.toIso8601String(),
       'taxId': taxId,
+      'address': address,
       'items': items?.map((e) => e.toJson()).toList(),
     };
   }

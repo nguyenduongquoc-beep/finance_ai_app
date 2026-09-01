@@ -26,7 +26,7 @@ class StreamErrorWidget extends StatelessWidget {
               size: 48,
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               'Đã xảy ra lỗi khi tải dữ liệu',
               style: TextStyle(
                 fontSize: 16,
@@ -38,7 +38,7 @@ class StreamErrorWidget extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               error,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 color: AppColors.textSecondary,
               ),

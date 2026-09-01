@@ -6,6 +6,7 @@ import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
 import '../../utils/formatters.dart';
 import '../../widgets/stream_error_widget.dart';
+import '../../widgets/app_snackbar.dart';
 
 /// 19. Báo cáo AI - Tổng hợp tháng: tiết kiệm, chi nhiều nhất, tăng %, khuyến nghị
 /// Có thể xuất PDF (TODO: dùng package pdf / printing để xuất file)
@@ -27,9 +28,7 @@ class AiReportScreen extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.picture_as_pdf_outlined),
             onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('TODO: Xuất PDF - dùng package pdf/printing')),
-              );
+              AppSnackbar.show(context, 'TODO: Xuất PDF - dùng package pdf/printing');
             },
           ),
         ],

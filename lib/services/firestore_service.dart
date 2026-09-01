@@ -63,13 +63,22 @@ class FirestoreService {
     return _db.collection('wallets').doc(walletId).delete();
   }
 
-  Future<bool> checkWalletInUse(String walletId) async {
-    final txQuery = await _db.collection('transactions').where('walletId', isEqualTo: walletId).limit(1).get();
+  Future<bool> checkWalletInUse(String userId, String walletId) async {
+    final txQuery = await _db
+        .collection('transactions')
+        .where('userId', isEqualTo: userId)
+        .where('walletId', isEqualTo: walletId)
+        .limit(1)
+        .get();
     return txQuery.docs.isNotEmpty;
   }
 
-  Future<void> reassignAndDeleteWallet(String oldWalletId, String newWalletId) async {
-    final txQuery = await _db.collection('transactions').where('walletId', isEqualTo: oldWalletId).get();
+  Future<void> reassignAndDeleteWallet(String userId, String oldWalletId, String newWalletId) async {
+    final txQuery = await _db
+        .collection('transactions')
+        .where('userId', isEqualTo: userId)
+        .where('walletId', isEqualTo: oldWalletId)
+        .get();
     final batch = _db.batch();
     for (var doc in txQuery.docs) {
       batch.update(doc.reference, {'walletId': newWalletId});
@@ -112,16 +121,34 @@ class FirestoreService {
     return _db.collection('categories').doc(categoryId).delete();
   }
 
-  Future<bool> checkCategoryInUse(String categoryId) async {
-    final txQuery = await _db.collection('transactions').where('categoryId', isEqualTo: categoryId).limit(1).get();
+  Future<bool> checkCategoryInUse(String userId, String categoryId) async {
+    final txQuery = await _db
+        .collection('transactions')
+        .where('userId', isEqualTo: userId)
+        .where('categoryId', isEqualTo: categoryId)
+        .limit(1)
+        .get();
     if (txQuery.docs.isNotEmpty) return true;
-    final budgetQuery = await _db.collection('budgets').where('categoryId', isEqualTo: categoryId).limit(1).get();
+    final budgetQuery = await _db
+        .collection('budgets')
+        .where('userId', isEqualTo: userId)
+        .where('categoryId', isEqualTo: categoryId)
+        .limit(1)
+        .get();
     return budgetQuery.docs.isNotEmpty;
   }
 
-  Future<void> reassignAndDeleteCategory(String oldCategoryId, String newCategoryId) async {
-    final txQuery = await _db.collection('transactions').where('categoryId', isEqualTo: oldCategoryId).get();
-    final budgetQuery = await _db.collection('budgets').where('categoryId', isEqualTo: oldCategoryId).get();
+  Future<void> reassignAndDeleteCategory(String userId, String oldCategoryId, String newCategoryId) async {
+    final txQuery = await _db
+        .collection('transactions')
+        .where('userId', isEqualTo: userId)
+        .where('categoryId', isEqualTo: oldCategoryId)
+        .get();
+    final budgetQuery = await _db
+        .collection('budgets')
+        .where('userId', isEqualTo: userId)
+        .where('categoryId', isEqualTo: oldCategoryId)
+        .get();
     
     final batch = _db.batch();
     for (var doc in txQuery.docs) {
@@ -145,6 +172,7 @@ class FirestoreService {
     if (tx.type == 'expense') {
       final budgetQuery = await _db
           .collection('budgets')
+          .where('userId', isEqualTo: tx.userId)
           .where('categoryId', isEqualTo: tx.categoryId)
           .where('month', isEqualTo: monthStr)
           .limit(1)
@@ -243,6 +271,7 @@ class FirestoreService {
     
     final oldBudgetQuery = await _db
         .collection('budgets')
+        .where('userId', isEqualTo: oldTx.userId)
         .where('categoryId', isEqualTo: oldTx.categoryId)
         .where('month', isEqualTo: monthStrOld)
         .limit(1)
@@ -250,6 +279,7 @@ class FirestoreService {
         
     final newBudgetQuery = await _db
         .collection('budgets')
+        .where('userId', isEqualTo: newTx.userId)
         .where('categoryId', isEqualTo: newTx.categoryId)
         .where('month', isEqualTo: monthStrNew)
         .limit(1)
@@ -299,6 +329,7 @@ class FirestoreService {
     if (newTx.type == 'expense') {
       final updatedBudgetQuery = await _db
           .collection('budgets')
+          .where('userId', isEqualTo: newTx.userId)
           .where('categoryId', isEqualTo: newTx.categoryId)
           .where('month', isEqualTo: monthStrNew)
           .limit(1)
@@ -332,7 +363,7 @@ class FirestoreService {
     // 2. Hoàn lại số tiền đã tiêu trong ngân sách (nếu là chi tiêu)
     if (tx.type == 'expense') {
       final monthStr = DateFormat('MM/yyyy').format(tx.date);
-      await adjustBudgetSpent(tx.categoryId, monthStr, -tx.amount);
+      await adjustBudgetSpent(tx.userId, tx.categoryId, monthStr, -tx.amount);
     }
 
     // 3. Xóa ảnh local nếu có
@@ -373,9 +404,10 @@ class FirestoreService {
   }
 
   /// Cập nhật số tiền đã chi tiêu của ngân sách (khi có giao dịch mới/xóa)
-  Future<void> adjustBudgetSpent(String categoryId, String month, double delta) async {
+  Future<void> adjustBudgetSpent(String userId, String categoryId, String month, double delta) async {
     final query = await _db
         .collection('budgets')
+        .where('userId', isEqualTo: userId)
         .where('categoryId', isEqualTo: categoryId)
         .where('month', isEqualTo: month)
         .limit(1)
@@ -453,11 +485,12 @@ class FirestoreService {
   }
 
   /// Lấy budget cho danh mục trong tháng hiện tại (hoặc tháng chỉ định)
-  Future<Budget?> getCategoryBudget(String categoryId, {String? month}) async {
+  Future<Budget?> getCategoryBudget(String userId, String categoryId, {String? month}) async {
     final now = DateTime.now();
     final monthStr = month ?? DateFormat('MM/yyyy').format(now);
     final query = await _db
         .collection('budgets')
+        .where('userId', isEqualTo: userId)
         .where('categoryId', isEqualTo: categoryId)
         .where('month', isEqualTo: monthStr)
         .limit(1)
@@ -468,8 +501,8 @@ class FirestoreService {
   }
 
   /// Lấy số tiền đã chi tiêu của một danh mục (budget) hiện tại
-  Future<double> getCategoryBudgetSpent(String categoryId) async {
-    final budget = await getCategoryBudget(categoryId);
+  Future<double> getCategoryBudgetSpent(String userId, String categoryId) async {
+    final budget = await getCategoryBudget(userId, categoryId);
     return budget?.spent ?? 0;
   }
 

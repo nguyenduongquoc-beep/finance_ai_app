@@ -15,6 +15,15 @@ class FinancialAnalyticsService {
   static const double kCategoryShareThreshold = 0.25;   // 1 danh mục chiếm >25% thu nhập
   static const double kLowSavingRateThreshold = 0.20;   // tỷ lệ tiết kiệm <20%
 
+  /// Tính "Điểm tin cậy" — mức độ vi phạm ngưỡng càng xa, tin cậy càng cao
+  /// rằng đây là vấn đề thật sự (không phải xác suất thống kê, mà là độ lệch
+  /// chuẩn hóa so với ngưỡng đã định nghĩa sẵn).
+  double _calculateConfidence(double currentValue, double thresholdValue) {
+    if (thresholdValue == 0) return 60;
+    final deviation = (currentValue - thresholdValue).abs() / thresholdValue;
+    return (60 + deviation * 100).clamp(60, 99).toDouble();
+  }
+
   Map<String, double> _sumByCategory(List<AppTransaction> transactions) {
     final Map<String, double> result = {};
     for (final tx in transactions.where((t) => t.type == 'expense')) {
@@ -55,14 +64,17 @@ class FinancialAnalyticsService {
                       categoryId: categoryId, userId: '', name: 'Khác',
                       type: 'expense', icon: 'category', color: 0xFF9E9E9E))
               .name;
+          final threshold = lastAmount * (1 + kCategorySpikeThreshold);
           issues.add(FinancialIssue(
             title: '$catName tăng ${(percentChange * 100).round()}% so với tháng trước',
             description:
                 'Tháng trước: ${lastAmount.round()}đ → Tháng này: ${currentAmount.round()}đ',
             severity: percentChange > 0.5 ? IssueSeverity.critical : IssueSeverity.warning,
+            category: IssueCategory.spike,
+            confidenceScore: _calculateConfidence(currentAmount, threshold),
             categoryName: catName,
             currentValue: currentAmount,
-            thresholdValue: lastAmount * (1 + kCategorySpikeThreshold),
+            thresholdValue: threshold,
           ));
         }
       }
@@ -83,6 +95,8 @@ class FinancialAnalyticsService {
             title: '$catName chiếm ${(share * 100).round()}% thu nhập tháng này',
             description: 'Vượt ngưỡng khuyến nghị ${(kCategoryShareThreshold * 100).round()}%',
             severity: share > 0.4 ? IssueSeverity.critical : IssueSeverity.warning,
+            category: IssueCategory.budgetShare,
+            confidenceScore: _calculateConfidence(share, kCategoryShareThreshold),
             categoryName: catName,
             currentValue: share,
             thresholdValue: kCategoryShareThreshold,
@@ -99,6 +113,8 @@ class FinancialAnalyticsService {
           title: 'Tỷ lệ tiết kiệm chỉ đạt ${(savingRate * 100).round()}%',
           description: 'Thấp hơn ngưỡng khuyến nghị ${(kLowSavingRateThreshold * 100).round()}%',
           severity: savingRate < 0.05 ? IssueSeverity.critical : IssueSeverity.warning,
+          category: IssueCategory.lowSaving,
+          confidenceScore: _calculateConfidence(savingRate, kLowSavingRateThreshold),
           currentValue: savingRate,
           thresholdValue: kLowSavingRateThreshold,
         ));
@@ -117,5 +133,40 @@ class FinancialAnalyticsService {
       score -= issue.severity == IssueSeverity.critical ? 20 : 10;
     }
     return score.clamp(0, 100).round();
+  }
+
+  /// Tính tần suất chi tiêu theo tuần (heatmap).
+  /// Trả về Map<TênDanhMục, List<int>> — mỗi phần tử trong List là mức độ đậm
+  /// nhạt (0-4) của chi tiêu vào đúng thứ đó trong tuần (index 0=Thứ 2 ... 6=CN),
+  /// tính từ TẤT CẢ giao dịch chi tiêu được truyền vào (nên truyền dữ liệu 30
+  /// ngày gần nhất). Chỉ lấy tối đa topN danh mục có tổng chi tiêu cao nhất.
+  Map<String, List<int>> computeWeeklyHeatmap(
+    List<AppTransaction> transactions,
+    List<Category> categories, {
+    int topN = 4,
+  }) {
+    final Map<String, List<double>> sums = {}; // tên danh mục -> tổng theo 7 thứ
+    for (final tx in transactions.where((t) => t.type == 'expense')) {
+      final cat = categories
+          .firstWhere((c) => c.categoryId == tx.categoryId,
+              orElse: () => Category(categoryId: tx.categoryId, userId: '', name: 'Khác',
+                  type: 'expense', icon: 'category', color: 0xFF9E9E9E));
+      final weekday = tx.date.weekday - 1; // 0 = Thứ 2
+      sums.putIfAbsent(cat.name, () => List.filled(7, 0));
+      sums[cat.name]![weekday] += tx.amount;
+    }
+    // Chỉ giữ topN danh mục theo tổng chi tiêu, chuẩn hóa mỗi ô về thang 0-4
+    final sortedEntries = sums.entries.toList()
+      ..sort((a, b) => b.value.reduce((x, y) => x + y).compareTo(a.value.reduce((x, y) => x + y)));
+    final top = sortedEntries.take(topN);
+
+    final result = <String, List<int>>{};
+    for (final entry in top) {
+      final maxVal = entry.value.reduce((a, b) => a > b ? a : b);
+      result[entry.key] = entry.value
+          .map((v) => maxVal == 0 ? 0 : (v / maxVal * 4).round().clamp(0, 4))
+          .toList();
+    }
+    return result;
   }
 }

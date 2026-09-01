@@ -14,11 +14,12 @@ class ValidationUtils {
   /// Returns true if adding [amount] to the spent amount of the budget for
   /// [categoryId] would exceed the budget limit.
   static Future<bool> exceedsCategoryBudget({
+    required String userId,
     required String categoryId,
     required double amount,
     required FirestoreService firestoreService,
   }) async {
-    final budget = await firestoreService.getCategoryBudget(categoryId);
+    final budget = await firestoreService.getCategoryBudget(userId, categoryId);
     if (budget == null) return false; // No budget defined for this category.
     final projectedSpent = budget.spent + amount;
     return projectedSpent > budget.limit;

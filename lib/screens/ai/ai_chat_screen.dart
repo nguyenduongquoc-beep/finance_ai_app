@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../../models/transaction_model.dart';
-import '../../models/wallet_model.dart';
-import '../../models/budget_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/ai_service.dart';
+import '../../services/theme_controller.dart';
 import '../../utils/constants.dart';
 import '../../utils/formatters.dart';
+import '../../widgets/app_snackbar.dart';
 
 /// 17. AI Financial Assistant - Chatbot tài chính (giống ChatGPT)
 /// AI đọc dữ liệu Firestore của người dùng -> phân tích -> trả lời
@@ -144,54 +143,88 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: AppColors.aiAccent.withOpacity(0.12),
-                shape: BoxShape.circle,
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeController.mode,
+      builder: (context, _, __) {
+        return Scaffold(
+          backgroundColor: AppColors.background,
+          appBar: AppBar(
+            title: Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: AppColors.primary,
+                  radius: 18,
+                  child: const Icon(Icons.auto_awesome, color: Colors.white, size: 18),
+                ),
+                const SizedBox(width: 10),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Trợ lý AI',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                    ),
+                    Row(
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF4CAF50), // active green dot
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Đang hoạt động',
+                          style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded),
+                tooltip: 'Phiên mới',
+                onPressed: _resetChat,
               ),
-              child: const Icon(Icons.auto_awesome, color: AppColors.aiAccent, size: 18),
-            ),
-            const SizedBox(width: 8),
-            const Text('AI Financial Assistant'),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            tooltip: 'Phiên mới',
-            onPressed: _resetChat,
+              IconButton(
+                icon: const Icon(Icons.info_outline),
+                tooltip: 'Thông tin',
+                onPressed: () {
+                  AppSnackbar.show(context, 'Trợ lý AI hỗ trợ quản lý chi tiêu cá nhân');
+                },
+              ),
+            ],
+            elevation: 0,
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              itemCount: _messages.length + (_isSending ? 1 : 0),
-              itemBuilder: (context, i) {
-                // Typing indicator
-                if (_isSending && i == _messages.length) {
-                  return _TypingIndicator();
-                }
-                final msg = _messages[i];
-                return _ChatBubble(message: msg);
-              },
-            ),
+          body: Column(
+            children: [
+              Expanded(
+                child: ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  itemCount: _messages.length + (_isSending ? 1 : 0),
+                  itemBuilder: (context, i) {
+                    if (_isSending && i == _messages.length) {
+                      return _TypingIndicator();
+                    }
+                    final msg = _messages[i];
+                    return _ChatBubble(message: msg);
+                  },
+                ),
+              ),
+              if (_messages.length == 1)
+                _buildSuggestions(),
+              _buildInputBar(),
+            ],
           ),
-          // Suggested questions
-          if (_messages.length == 1)
-            _buildSuggestions(),
-          _buildInputBar(),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -203,15 +236,23 @@ class _AiChatScreenState extends State<AiChatScreen> {
     ];
     return Container(
       height: 44,
-      padding: const EdgeInsets.only(left: 12),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(left: 16),
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: suggestions.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, i) => ActionChip(
-          label: Text(suggestions[i], style: const TextStyle(fontSize: 12)),
-          backgroundColor: AppColors.aiAccent.withOpacity(0.08),
-          side: BorderSide(color: AppColors.aiAccent.withOpacity(0.3)),
+          label: Text(
+            suggestions[i],
+            style: TextStyle(fontSize: 13, color: AppColors.textPrimary, fontWeight: FontWeight.w500),
+          ),
+          backgroundColor: AppColors.card,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(color: AppColors.aiAccent.withOpacity(0.3)),
+          ),
           onPressed: _isSending ? null : () {
             _sendMessage(suggestions[i]);
           },
@@ -223,14 +264,14 @@ class _AiChatScreenState extends State<AiChatScreen> {
   Widget _buildInputBar() {
     return SafeArea(
       child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.card,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.06),
+              color: Colors.black.withOpacity(0.04),
               blurRadius: 10,
-              offset: const Offset(0, -2),
+              offset: const Offset(0, -3),
             )
           ],
         ),
@@ -241,12 +282,13 @@ class _AiChatScreenState extends State<AiChatScreen> {
                 controller: _inputController,
                 focusNode: _inputFocusNode,
                 decoration: InputDecoration(
-                  hintText: 'Hỏi AI về tài chính của bạn...',
-                  hintStyle: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                  hintText: 'Hỏi Trợ lý AI về chi tiêu của bạn...',
+                  hintStyle: TextStyle(color: AppColors.textSecondary, fontSize: 14),
                   filled: true,
                   fillColor: AppColors.background,
+                  suffixIcon: Icon(Icons.mic_none_outlined, color: AppColors.textSecondary),
                   contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(24),
                     borderSide: BorderSide.none,
@@ -257,13 +299,15 @@ class _AiChatScreenState extends State<AiChatScreen> {
                 onSubmitted: (_) => _handleSend(),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             AnimatedContainer(
               duration: const Duration(milliseconds: 200),
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 color: _isSending
                     ? AppColors.textSecondary
-                    : AppColors.aiAccent,
+                    : AppColors.primary,
                 shape: BoxShape.circle,
               ),
               child: IconButton(
@@ -292,31 +336,19 @@ class _ChatBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final isUser = message.isUser;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         mainAxisAlignment:
             isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          if (!isUser) ...[
-            Container(
-              width: 30,
-              height: 30,
-              margin: const EdgeInsets.only(right: 6, bottom: 2),
-              decoration: BoxDecoration(
-                color: AppColors.aiAccent.withOpacity(0.12),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.auto_awesome, size: 16, color: AppColors.aiAccent),
-            ),
-          ],
           Flexible(
             child: Container(
               constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width * 0.72),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  maxWidth: MediaQuery.of(context).size.width * 0.75),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
-                color: isUser ? AppColors.primary : Colors.white,
+                color: isUser ? AppColors.primary : AppColors.card,
                 borderRadius: BorderRadius.only(
                   topLeft: const Radius.circular(16),
                   topRight: const Radius.circular(16),
@@ -325,9 +357,9 @@ class _ChatBubble extends StatelessWidget {
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.06),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
+                    color: Colors.black.withOpacity(0.03),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
                   )
                 ],
               ),
@@ -335,13 +367,12 @@ class _ChatBubble extends StatelessWidget {
                 message.text,
                 style: TextStyle(
                   color: isUser ? Colors.white : AppColors.textPrimary,
-                  height: 1.45,
+                  height: 1.4,
                   fontSize: 14,
                 ),
               ),
             ),
           ),
-          if (isUser) const SizedBox(width: 4),
         ],
       ),
     );
@@ -375,21 +406,12 @@ class _TypingIndicatorState extends State<_TypingIndicator>
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.start,
         children: [
           Container(
-            width: 30,
-            height: 30,
-            margin: const EdgeInsets.only(right: 6),
-            decoration: BoxDecoration(
-              color: AppColors.aiAccent.withOpacity(0.12),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.auto_awesome, size: 16, color: AppColors.aiAccent),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: const BorderRadius.only(
@@ -400,9 +422,9 @@ class _TypingIndicatorState extends State<_TypingIndicator>
               ),
               boxShadow: [
                 BoxShadow(
-                    color: Colors.black.withOpacity(0.06),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2))
+                    color: Colors.black.withOpacity(0.03),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3))
               ],
             ),
             child: AnimatedBuilder(

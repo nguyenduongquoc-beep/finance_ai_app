@@ -56,6 +56,24 @@ class AuthService {
     await _auth.sendPasswordResetEmail(email: email);
   }
 
+  /// Đổi mật khẩu — yêu cầu xác thực lại (re-authenticate) trước khi đổi,
+  /// theo đúng yêu cầu bảo mật của Firebase Auth.
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) {
+      throw Exception('Người dùng chưa đăng nhập hoặc không có email');
+    }
+    final credential = EmailAuthProvider.credential(
+      email: user.email!,
+      password: currentPassword,
+    );
+    await user.reauthenticateWithCredential(credential);
+    await user.updatePassword(newPassword);
+  }
+
   /// Đăng xuất
   Future<void> signOut() async {
     await _getGoogleSignIn.signOut();

@@ -132,7 +132,7 @@ class BudgetProgressCard extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           '${AppFormatters.currency(budget.spent)} / ${AppFormatters.currency(budget.limit)}',
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontSize: 12, color: AppColors.textSecondary),
                         ),
                       ],
@@ -164,7 +164,7 @@ class BudgetProgressCard extends StatelessWidget {
                   ),
                   Text(
                     'Còn lại: ${AppFormatters.currency((budget.limit - budget.spent).clamp(0, double.infinity))}',
-                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                   ),
                 ],
               ),

@@ -39,6 +39,38 @@ class _MainNavigationState extends State<MainNavigation> {
     setState(() => _currentIndex = index);
   }
 
+  Widget _buildNavItem(int index, IconData inactiveIcon, IconData activeIcon, String label) {
+    final isSelected = _currentIndex == index;
+    final color = isSelected ? AppColors.primary : AppColors.textSecondary;
+    return Expanded(
+      child: InkWell(
+        onTap: () => _onTabTapped(index),
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              isSelected ? activeIcon : inactiveIcon,
+              color: color,
+              size: 24,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -46,22 +78,34 @@ class _MainNavigationState extends State<MainNavigation> {
         index: _currentIndex == 2 ? 0 : _currentIndex,
         children: _screens,
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex == 2 ? 0 : _currentIndex,
-        onTap: _onTabTapped,
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: AppColors.primary,
-        unselectedItemColor: AppColors.textSecondary,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.dashboard_rounded), label: 'Trang chủ'),
-          BottomNavigationBarItem(icon: Icon(Icons.receipt_long_rounded), label: 'Giao dịch'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.add_circle, size: 40, color: AppColors.primary),
-            label: '',
-          ),
-          BottomNavigationBarItem(icon: Icon(Icons.auto_awesome_rounded), label: 'AI'),
-          BottomNavigationBarItem(icon: Icon(Icons.person_rounded), label: 'Cá nhân'),
-        ],
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _onTabTapped(2),
+        backgroundColor: AppColors.primary,
+        shape: const CircleBorder(),
+        elevation: 4,
+        child: const Icon(
+          Icons.add,
+          color: Colors.white,
+          size: 28,
+        ),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+      bottomNavigationBar: BottomAppBar(
+        color: Colors.white,
+        surfaceTintColor: Colors.white,
+        elevation: 8,
+        height: 72,
+        padding: EdgeInsets.zero,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _buildNavItem(0, Icons.home_outlined, Icons.home_rounded, 'Trang chủ'),
+            _buildNavItem(1, Icons.receipt_long_outlined, Icons.receipt_long_rounded, 'Giao dịch'),
+            const SizedBox(width: 68), // Khoảng trống cho nút "+" nổi ở giữa
+            _buildNavItem(3, Icons.auto_awesome_outlined, Icons.auto_awesome_rounded, 'Trợ lý AI'),
+            _buildNavItem(4, Icons.person_outline_rounded, Icons.person_rounded, 'Cá nhân'),
+          ],
+        ),
       ),
     );
   }

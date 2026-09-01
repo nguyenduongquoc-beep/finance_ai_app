@@ -125,11 +125,15 @@ void main() {
           title: 'Issue 1',
           description: 'Desc 1',
           severity: IssueSeverity.warning,
+          category: IssueCategory.spike,
+          confidenceScore: 80.0,
         ),
         FinancialIssue(
           title: 'Issue 2',
           description: 'Desc 2',
           severity: IssueSeverity.critical,
+          category: IssueCategory.spike,
+          confidenceScore: 80.0,
         ),
       ];
 

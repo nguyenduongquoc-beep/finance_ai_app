@@ -18,7 +18,7 @@ class TrendChartCard extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.card,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
@@ -100,7 +100,7 @@ class TrendChartCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          Text(trendResult.insight, style: const TextStyle(height: 1.6, color: AppColors.textPrimary)),
+          Text(trendResult.insight, style: TextStyle(height: 1.6, color: AppColors.textPrimary)),
         ],
       ),
     );

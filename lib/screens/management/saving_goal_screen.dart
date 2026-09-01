@@ -4,6 +4,7 @@ import 'package:percent_indicator/percent_indicator.dart';
 import '../../models/saving_goal_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/ai_service.dart';
+import '../../services/theme_controller.dart';
 import '../../utils/constants.dart';
 import '../../utils/formatters.dart';
 import '../../widgets/stream_error_widget.dart';
@@ -14,11 +15,14 @@ class SavingGoalScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final firestoreService = FirestoreService();
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeController.mode,
+      builder: (context, _, __) {
+        final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+        final firestoreService = FirestoreService();
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
+        return Scaffold(
+          backgroundColor: AppColors.background,
       appBar: AppBar(title: const Text('Mục tiêu tiết kiệm')),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: AppColors.primary,
@@ -48,6 +52,8 @@ class SavingGoalScreen extends StatelessWidget {
         },
       ),
     );
+  },
+);
   }
 
   Widget _buildEmptyState(
@@ -68,13 +74,13 @@ class SavingGoalScreen extends StatelessWidget {
                   size: 48, color: AppColors.primary),
             ),
             const SizedBox(height: 16),
-            const Text('Chưa có mục tiêu tiết kiệm',
+            Text('Chưa có mục tiêu tiết kiệm',
                 style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
                     color: AppColors.textPrimary)),
             const SizedBox(height: 8),
-            const Text('Tạo mục tiêu để AI giúp bạn lên kế hoạch tiết kiệm!',
+            Text('Tạo mục tiêu để AI giúp bạn lên kế hoạch tiết kiệm!',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppColors.textSecondary)),
             const SizedBox(height: 24),
@@ -253,7 +259,7 @@ class _GoalCardState extends State<_GoalCard> {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.card,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
@@ -298,7 +304,7 @@ class _GoalCardState extends State<_GoalCard> {
                       ),
                       const SizedBox(height: 2),
                       Text('Mục tiêu: ${AppFormatters.currency(goal.targetAmount)}',
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: AppColors.textSecondary, fontSize: 12)),
                     ],
                   ),
@@ -341,7 +347,7 @@ class _GoalCardState extends State<_GoalCard> {
                 ),
                 Text(
                   'Còn: ${AppFormatters.currency(goal.targetAmount - goal.savedAmount)}',
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 13, color: AppColors.textSecondary),
                 ),
               ],
@@ -352,7 +358,7 @@ class _GoalCardState extends State<_GoalCard> {
                 'Cần ${AppFormatters.currency(goal.monthlyRequired)}/tháng '
                 '≈ ${AppFormatters.currency(goal.dailyRequired)}/ngày',
                 style:
-                    const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    TextStyle(fontSize: 12, color: AppColors.textSecondary),
               ),
             ],
             const SizedBox(height: 14),
@@ -423,7 +429,7 @@ class _GoalCardState extends State<_GoalCard> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(_aiPlan!,
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontSize: 13,
                               height: 1.5,
                               color: AppColors.textPrimary)),

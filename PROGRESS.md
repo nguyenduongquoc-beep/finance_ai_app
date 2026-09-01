@@ -22,7 +22,7 @@
 - [x] AI 7: OCR hóa đơn — đã tích hợp Google ML Kit Text Recognition (on-device) kết hợp Gemini (structured extraction). Fallback gửi ảnh thẳng cho Gemini nếu ML Kit không nhận diện được text.
 - [ ] Xuất báo cáo PDF ở AI Report Screen (package `pdf` + `printing`)
 - [ ] Firebase Cloud Messaging: nhắc nhở hóa đơn định kỳ (điện, nước, Internet, thuê nhà)
-- [ ] Dark Mode thật (ThemeProvider) — hiện tại là placeholder switch
+- [x] Dark Mode thật (ThemeController + ValueNotifier + shared_preferences) — đã hoàn thành ở Ticket 018.
 - [ ] Đổi ngôn ngữ (đa ngôn ngữ) — hiện tại là placeholder
 - [ ] Đổi mật khẩu trong Profile Screen — hiện tại là placeholder
 - [ ] (Mở rộng) Vai trò Quản trị viên (Web - Firebase Hosting/Flutter Web)

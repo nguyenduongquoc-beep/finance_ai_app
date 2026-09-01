@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../services/auth_service.dart';
 import '../../utils/constants.dart';
 
@@ -38,27 +39,76 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(title: const Text('Quên mật khẩu')),
+      backgroundColor: AppColors.fixedLightBackground,
+      appBar: AppBar(
+        backgroundColor: AppColors.fixedLightBackground,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back_ios_new_rounded, color: AppColors.fixedLightTextPrimary, size: 20),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
       body: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
         child: _emailSent
             ? Column(
                 mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const Icon(Icons.mark_email_read_outlined,
-                      size: 72, color: AppColors.primary),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Đã gửi email đặt lại mật khẩu!',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  Container(
+                    width: 100,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.mark_email_read_outlined,
+                      size: 48,
+                      color: AppColors.primary,
+                    ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 28),
                   Text(
-                    'Vui lòng kiểm tra hộp thư ${_emailController.text} để đặt lại mật khẩu.',
+                    'Đã gửi email thành công!',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: AppColors.textSecondary),
+                    style: GoogleFonts.inter(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Vui lòng kiểm tra hộp thư ${_emailController.text} và làm theo hướng dẫn để đặt lại mật khẩu.',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.inter(
+                      color: AppColors.textSecondary,
+                      fontSize: 14,
+                      height: 1.6,
+                    ),
+                  ),
+                  const SizedBox(height: 36),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: Text(
+                        'Quay lại đăng nhập',
+                        style: GoogleFonts.inter(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               )
@@ -67,41 +117,116 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Nhập email đã đăng ký, chúng tôi sẽ gửi liên kết đặt lại mật khẩu.',
-                      style: TextStyle(color: AppColors.textSecondary),
+                    Text(
+                      'Cấp mật khẩu',
+                      style: GoogleFonts.inter(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.fixedLightTextPrimary,
+                      ),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Nhập địa chỉ email của bạn đăng ký tài khoản. Chúng tôi sẽ gửi liên kết cấp lại mật khẩu vào hòm thư này.',
+                      style: GoogleFonts.inter(
+                        color: AppColors.fixedLightTextSecondary,
+                        fontSize: 14,
+                        height: 1.6,
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+
+                    // Email Field Label
+                    Text(
+                      'Địa chỉ Email',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.fixedLightTextPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     TextFormField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
-                      decoration: const InputDecoration(
-                        labelText: 'Email',
-                        prefixIcon: Icon(Icons.email_outlined),
+                      style: GoogleFonts.inter(fontSize: 15),
+                      decoration: InputDecoration(
+                        hintText: 'nguyenvana@gmail.com',
+                        hintStyle: GoogleFonts.inter(color: Colors.grey.shade400),
+                        prefixIcon: const Icon(Icons.email_outlined, color: Colors.grey),
+                        filled: true,
+                        fillColor: Colors.grey.shade50,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 16),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: Colors.grey.shade200),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: Colors.grey.shade200),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+                        ),
                       ),
                       validator: (v) =>
                           (v == null || !v.contains('@')) ? 'Email không hợp lệ' : null,
                     ),
                     if (_errorMessage != null) ...[
                       const SizedBox(height: 12),
-                      Text(_errorMessage!, style: const TextStyle(color: AppColors.expense)),
+                      Text(
+                        _errorMessage!,
+                        style: GoogleFonts.inter(color: AppColors.expense, fontSize: 13),
+                      ),
                     ],
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 32),
+
+                    // Send Link Button
                     SizedBox(
                       width: double.infinity,
+                      height: 52,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.primary,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
                         onPressed: _isLoading ? null : _handleSendEmail,
                         child: _isLoading
                             ? const SizedBox(
-                                width: 20,
-                                height: 20,
+                                width: 22,
+                                height: 22,
                                 child: CircularProgressIndicator(
-                                    color: Colors.white, strokeWidth: 2))
-                            : const Text('Gửi email', style: TextStyle(color: Colors.white)),
+                                  color: Colors.white,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Text(
+                                'Gửi link liên kết',
+                                style: GoogleFonts.inter(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
+                    // Back to login text link
+                    Center(
+                      child: TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: Text(
+                          'Quay lại Đăng nhập',
+                          style: GoogleFonts.inter(
+                            color: AppColors.fixedLightTextSecondary,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
                     ),
                   ],

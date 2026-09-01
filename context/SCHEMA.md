@@ -39,7 +39,7 @@ Firebase Project: `finance-ai-app-6df28` · Firestore hiện chạy ở **test m
 |---|---|---|---|
 | name | string | ✓ | |
 | email | string | ✓ | |
-| avatar | string? | | URL Firebase Storage |
+| avatar | string? | | Đường dẫn file cục bộ trên thiết bị (path_provider), đọc bằng Image.file/FileImage — không phải URL cloud, giống cơ chế lưu ảnh hóa đơn giao dịch (xem mục 5) |
 | monthlyIncome | number | | default 0 |
 | savingGoal | string? | | mô tả tự do, khác với collection `savingGoals` |
 | occupation | string? | | |

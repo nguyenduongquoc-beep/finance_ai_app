@@ -3,10 +3,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../models/budget_model.dart';
 import '../../models/category_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/theme_controller.dart';
 import '../../utils/constants.dart';
 import '../../utils/formatters.dart';
 import '../../widgets/budget_progress_card.dart';
 import '../../widgets/stream_error_widget.dart';
+import '../../widgets/app_snackbar.dart';
 
 /// 15. Quản lý ngân sách - vd: Ăn uống 3 triệu/tháng, cảnh báo khi vượt 90%
 class BudgetManagementScreen extends StatelessWidget {
@@ -14,12 +16,15 @@ class BudgetManagementScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final firestoreService = FirestoreService();
-    final currentMonth = AppFormatters.month(DateTime.now());
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeController.mode,
+      builder: (context, _, __) {
+        final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+        final firestoreService = FirestoreService();
+        final currentMonth = AppFormatters.month(DateTime.now());
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
+        return Scaffold(
+          backgroundColor: AppColors.background,
       appBar: AppBar(title: const Text('Quản lý ngân sách')),
       floatingActionButton: FloatingActionButton(
         backgroundColor: AppColors.primary,
@@ -38,7 +43,7 @@ class BudgetManagementScreen extends StatelessWidget {
               final budgets = budgetSnap.data ?? [];
               if (!budgetSnap.hasData) return const Center(child: CircularProgressIndicator());
               if (budgets.isEmpty) {
-                return const Center(
+                return Center(
                   child: Text('Chưa thiết lập ngân sách nào cho tháng này',
                       style: TextStyle(color: AppColors.textSecondary)),
                 );
@@ -65,6 +70,8 @@ class BudgetManagementScreen extends StatelessWidget {
         },
       ),
     );
+  },
+);
   }
 
   void _showBudgetDialog(
@@ -138,12 +145,10 @@ class BudgetManagementScreen extends StatelessWidget {
                 if (budget == null) {
                   if (selectedCategory == null) return;
                   
-                  final existing = await firestoreService.getCategoryBudget(selectedCategory!.categoryId, month: month);
+                  final existing = await firestoreService.getCategoryBudget(uid, selectedCategory!.categoryId, month: month);
                   if (existing != null) {
                     if (ctx.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Ngân sách cho danh mục này trong tháng đã tồn tại. Đang chuyển sang chế độ sửa.'))
-                      );
+                      AppSnackbar.show(context, 'Ngân sách cho danh mục này trong tháng đã tồn tại. Đang chuyển sang chế độ sửa.');
                       Navigator.pop(ctx);
                       _showBudgetDialog(context, firestoreService, uid, month, budget: existing);
                     }

@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../models/category_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/theme_controller.dart';
 import '../../utils/constants.dart';
 import '../../widgets/stream_error_widget.dart';
+import '../../widgets/app_snackbar.dart';
 
 /// 14. Quản lý danh mục - Đổi icon, Đổi màu, Tạo mới
 class CategoryManagementScreen extends StatefulWidget {
@@ -37,10 +39,13 @@ class _CategoryManagementScreenState extends State<CategoryManagementScreen>
 
   @override
   Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeController.mode,
+      builder: (context, _, __) {
+        final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
+        return Scaffold(
+          backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('Quản lý danh mục'),
         bottom: TabBar(
@@ -62,6 +67,8 @@ class _CategoryManagementScreenState extends State<CategoryManagementScreen>
         ],
       ),
     );
+  },
+);
   }
 
   Widget _buildCategoryList(String uid, String type) {
@@ -85,65 +92,74 @@ class _CategoryManagementScreenState extends State<CategoryManagementScreen>
             return GestureDetector(
               onTap: () => _showCategoryDialog(context, uid, category: c),
               onLongPress: () async {
-                final inUse = await _firestoreService.checkCategoryInUse(c.categoryId);
-                if (!inUse) {
-                  final confirm = await showDialog<bool>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      title: const Text('Xóa danh mục?'),
-                      content: const Text('Bạn có chắc chắn muốn xóa danh mục này? Hành động này không thể hoàn tác.'),
-                      actions: [
-                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
-                        TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Xóa', style: TextStyle(color: AppColors.expense))),
-                      ],
-                    ),
-                  );
-                  if (confirm == true) {
-                    await _firestoreService.deleteCategory(c.categoryId);
-                  }
-                  return;
-                }
-                
-                final defaultCategory = categories.firstWhere((cat) => cat.categoryId != c.categoryId, orElse: () => c);
-                if (defaultCategory.categoryId == c.categoryId) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Không thể xóa danh mục duy nhất đang chứa giao dịch/ngân sách.')));
-                  return;
-                }
-                
-                String? selectedCategoryId = defaultCategory.categoryId;
-                final confirmReassign = await showDialog<bool>(
-                  context: context,
-                  builder: (ctx) {
-                    return StatefulBuilder(
-                      builder: (context, setState) => AlertDialog(
-                        title: const Text('Danh mục đang được sử dụng'),
-                        content: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text('Danh mục này đang chứa giao dịch hoặc ngân sách. Vui lòng chọn danh mục để chuyển các dữ liệu này sang trước khi xóa:'),
-                            const SizedBox(height: 12),
-                            DropdownButtonFormField<String>(
-                              value: selectedCategoryId,
-                              decoration: const InputDecoration(labelText: 'Chuyển sang', border: OutlineInputBorder()),
-                              items: categories
-                                  .where((cat) => cat.categoryId != c.categoryId)
-                                  .map((cat) => DropdownMenuItem(value: cat.categoryId, child: Text(cat.name)))
-                                  .toList(),
-                              onChanged: (v) => setState(() => selectedCategoryId = v),
-                            ),
-                          ],
-                        ),
+                try {
+                  final inUse = await _firestoreService.checkCategoryInUse(uid, c.categoryId);
+                  if (!inUse) {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Xóa danh mục?'),
+                        content: const Text('Bạn có chắc chắn muốn xóa danh mục này? Hành động này không thể hoàn tác.'),
                         actions: [
                           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
-                          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Xóa & Chuyển', style: TextStyle(color: AppColors.expense))),
+                          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Xóa', style: TextStyle(color: AppColors.expense))),
                         ],
-                      )
+                      ),
                     );
+                    if (confirm == true) {
+                      await _firestoreService.deleteCategory(c.categoryId);
+                    }
+                    return;
                   }
-                );
-                
-                if (confirmReassign == true && selectedCategoryId != null) {
-                  await _firestoreService.reassignAndDeleteCategory(c.categoryId, selectedCategoryId!);
+                  
+                  final defaultCategory = categories.firstWhere((cat) => cat.categoryId != c.categoryId, orElse: () => c);
+                  if (defaultCategory.categoryId == c.categoryId) {
+                    if (context.mounted) {
+                      AppSnackbar.show(context, 'Không thể xóa danh mục duy nhất đang chứa giao dịch/ngân sách.', isError: true);
+                    }
+                    return;
+                  }
+                  
+                  String? selectedCategoryId = defaultCategory.categoryId;
+                  final confirmReassign = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) {
+                      return StatefulBuilder(
+                        builder: (context, setState) => AlertDialog(
+                          title: const Text('Danh mục đang được sử dụng'),
+                          content: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text('Danh mục này đang chứa giao dịch hoặc ngân sách. Vui lòng chọn danh mục để chuyển các dữ liệu này sang trước khi xóa:'),
+                              const SizedBox(height: 12),
+                              DropdownButtonFormField<String>(
+                                value: selectedCategoryId,
+                                decoration: const InputDecoration(labelText: 'Chuyển sang', border: OutlineInputBorder()),
+                                items: categories
+                                    .where((cat) => cat.categoryId != c.categoryId)
+                                    .map((cat) => DropdownMenuItem(value: cat.categoryId, child: Text(cat.name)))
+                                    .toList(),
+                                onChanged: (v) => setState(() => selectedCategoryId = v),
+                              ),
+                            ],
+                          ),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+                            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Xóa & Chuyển', style: TextStyle(color: AppColors.expense))),
+                          ],
+                        )
+                      );
+                    }
+                  );
+                  
+                  if (confirmReassign == true && selectedCategoryId != null) {
+                    await _firestoreService.reassignAndDeleteCategory(uid, c.categoryId, selectedCategoryId!);
+                  }
+                } catch (e) {
+                  debugPrint('❌ Lỗi khi kiểm tra/xóa danh mục: $e');
+                  if (context.mounted) {
+                    AppSnackbar.show(context, 'Không thể xóa danh mục. Vui lòng kiểm tra kết nối và thử lại.', isError: true);
+                  }
                 }
               },
               child: Column(

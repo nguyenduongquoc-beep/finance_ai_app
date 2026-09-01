@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/theme_controller.dart';
 
 /// ============================================================
 /// APP CONSTANTS
@@ -9,12 +10,34 @@ class AppColors {
   static const Color secondary = Color(0xFF4CAF94);
   static const Color income = Color(0xFF2E7D32); // xanh - thu nhập
   static const Color expense = Color(0xFFD32F2F); // đỏ - chi tiêu
-  static const Color background = Color(0xFFF7F8FA);
-  static const Color card = Colors.white;
-  static const Color textPrimary = Color(0xFF1A1A1A);
-  static const Color textSecondary = Color(0xFF757575);
   static const Color warning = Color(0xFFFFA726);
   static const Color aiAccent = Color(0xFF7C4DFF); // tím - điểm nhấn AI
+
+  // Đổi động theo ThemeController.isDark
+  static Color get background =>
+      ThemeController.isDark ? const Color(0xFF121212) : const Color(0xFFF7F8FA);
+  static Color get card =>
+      ThemeController.isDark ? const Color(0xFF1E1E1E) : Colors.white;
+  static Color get textPrimary =>
+      ThemeController.isDark ? const Color(0xFFF5F5F5) : const Color(0xFF1A1A1A);
+  static Color get textSecondary =>
+      ThemeController.isDark ? const Color(0xFFB0B0B0) : const Color(0xFF757575);
+
+  // Dùng riêng cho nhóm màn Auth — LUÔN sáng, không phụ thuộc ThemeController
+  static const Color fixedLightBackground = Color(0xFFF7F8FA);
+  static const Color fixedLightCard = Colors.white;
+  static const Color fixedLightTextPrimary = Color(0xFF1A1A1A);
+  static const Color fixedLightTextSecondary = Color(0xFF757575);
+
+  // Dark theme colors — splash, onboarding, login
+  static const Color darkBackground = Color(0xFF0A1A2E);
+  static const Color darkSurface = Color(0xFF112240);
+  static const Color darkCard = Color(0xFF1A2F4A);
+  static const Color accentGreen = Color(0xFF4ADE80);
+  static const Color glowGreen = Color(0xFF00E676);
+  static const Color darkTextPrimary = Color(0xFFFFFFFF);
+  static const Color darkTextSecondary = Color(0xFFB0BEC5);
+  static const Color darkDivider = Color(0xFF1E3A5F);
 }
 
 class AppStrings {

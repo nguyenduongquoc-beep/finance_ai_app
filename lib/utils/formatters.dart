@@ -9,9 +9,9 @@ class AppFormatters {
   static final DateFormat _dateFormat = DateFormat('dd/MM/yyyy');
   static final DateFormat _monthFormat = DateFormat('MM/yyyy');
 
-  /// Format số tiền: 1200000 -> "1.200.000 đ"
+  /// Format số tiền: 1200000 -> "1.200.000 VNĐ"
   static String currency(num amount) {
-    return '${_currencyFormat.format(amount)} đ';
+    return '${_currencyFormat.format(amount)} VNĐ';
   }
 
   /// Format số tiền không kèm đơn vị: 1200000 -> "1.200.000"

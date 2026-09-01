@@ -305,6 +305,23 @@ Trả lời bằng tiếng Việt, giọng thân thiện, đi thẳng vào từn
     return response.text ?? 'Không thể tạo đề xuất lúc này.';
   }
 
+  /// Giải thích + đề xuất cho ĐÚNG 1 vấn đề, gọi khi người dùng bấm xem chi
+  /// tiết trên 1 thẻ cụ thể — ngắn gọn, không viết đoạn văn dài.
+  Future<String> explainSingleIssue(FinancialIssue issue) async {
+    final prompt = '''
+Bạn là trợ lý tài chính cá nhân. Hệ thống đã phát hiện vấn đề sau (đã tính
+sẵn bằng số liệu, không cần bạn tính toán lại):
+
+${issue.title}: ${issue.description}
+
+Viết TỐI ĐA 2-3 câu bằng tiếng Việt: 1 câu nêu nguyên nhân có thể, 1 câu đề
+xuất phương án cải thiện CÓ SỐ LIỆU CỤ THỂ. Không lan man, không mở đầu bằng
+lời chào.
+''';
+    final response = await _generateWithFallback([Content.text(prompt)]);
+    return response.text ?? 'Không thể tạo đề xuất lúc này.';
+  }
+
   String _stripMarkdownCodeFence(String text) {
     final trimmed = text.trim();
     final fenceRegex = RegExp(r'^```(?:json)?\s*([\s\S]*?)\s*```$');

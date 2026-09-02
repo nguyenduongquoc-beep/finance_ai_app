@@ -8,7 +8,6 @@ class Budget {
   final String categoryId;
   final double limit;
   final String month; // định dạng "MM/yyyy"
-  final double spent; // tính toán tại client hoặc lưu cache
 
   Budget({
     required this.budgetId,
@@ -16,12 +15,23 @@ class Budget {
     required this.categoryId,
     required this.limit,
     required this.month,
-    this.spent = 0,
   });
 
-  double get percentUsed => limit == 0 ? 0 : (spent / limit).clamp(0, 1.5);
-  bool get isOverBudget => spent > limit;
-  bool get isNearLimit => percentUsed >= 0.9 && !isOverBudget;
+  /// Tính % đã dùng — KHÔNG clamp giới hạn trên, cho phép vượt >100%
+  /// (chỉ clamp 0 ở cận dưới để tránh số âm hiển thị sai).
+  double percentUsed(double spentAmount) =>
+      limit <= 0 ? 0 : (spentAmount / limit).clamp(0, double.infinity);
+
+  bool isOverBudget(double spentAmount) => spentAmount > limit;
+
+  /// Cảnh báo sắp vượt: 80–99%.
+  bool isNearLimit(double spentAmount) {
+    final p = percentUsed(spentAmount);
+    return p >= 0.8 && !isOverBudget(spentAmount);
+  }
+
+  /// Số tiền còn lại (có thể âm nếu vượt limit)
+  double remaining(double spentAmount) => limit - spentAmount;
 
   factory Budget.fromMap(Map<String, dynamic> map, String id) {
     return Budget(
@@ -30,7 +40,8 @@ class Budget {
       categoryId: map['categoryId'] ?? '',
       limit: (map['limit'] ?? 0).toDouble(),
       month: map['month'] ?? '',
-      spent: (map['spent'] ?? 0).toDouble(),
+      // Lưu ý: field 'spent' cũ (nếu còn sót trong document cũ) KHÔNG đọc nữa,
+      // không throw lỗi — Firestore vẫn có thể còn field thừa, bỏ qua an toàn.
     );
   }
 
@@ -40,7 +51,7 @@ class Budget {
       'categoryId': categoryId,
       'limit': limit,
       'month': month,
-      'spent': spent,
+      // Không còn ghi field 'spent' — không còn là nguồn sự thật.
     };
   }
 }

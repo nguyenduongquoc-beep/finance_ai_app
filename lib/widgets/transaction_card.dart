@@ -47,11 +47,15 @@ class TransactionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isTransfer = transaction.type == 'transfer';
     final isIncome = transaction.type == 'income';
-    final color = isIncome ? AppColors.income : AppColors.expense;
+    final color = isTransfer
+        ? AppColors.textSecondary
+        : (isIncome ? AppColors.income : AppColors.expense);
     final hasNote = transaction.note != null && transaction.note!.trim().isNotEmpty;
-    final titleText = hasNote ? transaction.note! : (category?.name ?? 'Không rõ danh mục');
-    final subtitleText = hasNote ? (category?.name ?? 'Không rõ danh mục') : null;
+    final categoryLabel = isTransfer ? 'Chuyển tiền' : (category?.name ?? 'Không rõ danh mục');
+    final titleText = hasNote ? transaction.note! : categoryLabel;
+    final subtitleText = hasNote ? categoryLabel : null;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -68,12 +72,14 @@ class TransactionCard extends StatelessWidget {
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.1),
+            color: isTransfer
+                ? AppColors.textSecondary.withValues(alpha: 0.1)
+                : AppColors.primary.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Icon(
-            _getCategoryIcon(category?.icon),
-            color: AppColors.primary,
+            isTransfer ? Icons.swap_horiz : _getCategoryIcon(category?.icon),
+            color: isTransfer ? AppColors.textSecondary : AppColors.primary,
             size: 22,
           ),
         ),
@@ -99,7 +105,9 @@ class TransactionCard extends StatelessWidget {
               )
             : null,
         trailing: Text(
-          '${isIncome ? '+' : '-'}${AppFormatters.number(transaction.amount)} VNĐ',
+          isTransfer
+              ? '${AppFormatters.number(transaction.amount)} VNĐ'
+              : '${isIncome ? '+' : '-'}${AppFormatters.number(transaction.amount)} VNĐ',
           style: GoogleFonts.inter(
             color: color,
             fontWeight: FontWeight.bold,

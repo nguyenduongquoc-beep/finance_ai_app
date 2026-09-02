@@ -50,9 +50,14 @@ Firebase Project: `finance-ai-app-6df28` · Firestore hiện chạy ở **test m
 |---|---|---|
 | userId | string | |
 | walletName | string | |
-| balance | number | cập nhật qua `FieldValue.increment`, không set trực tiếp khi có giao dịch |
+| balance | number | Số dư HIỆN TẠI — cache, cập nhật qua `FieldValue.increment` trong `runTransaction`, không set trực tiếp khi có giao dịch |
+| initialBalance | number | Số dư ban đầu lúc tạo ví, không đổi sau đó. Ví cũ chưa có field này → `fromMap` fallback về `balance` |
 | type | string | enum: `cash` \| `bank` \| `eWallet` \| `other` |
+| description | string? | Mô tả tùy chọn, VD "Chi tiêu sinh hoạt" |
+| currency | string | Mặc định `'VND'`. Hiện chỉ lưu trữ, chưa có UI đa tiền tệ |
+| isActive | bool | Mặc định `true`. `false` = đã ẩn (soft-delete). Ví cũ chưa có field → `fromMap` fallback `true`. Lọc ở client, **không** dùng `.where('isActive', ...)` trong query Firestore (vì document thiếu field sẽ bị loại khỏi kết quả) |
 | createdAt | string (ISO8601) | |
+| updatedAt | string? (ISO8601) | Tự động cập nhật khi sửa ví |
 
 ### 2.3. `categories/{categoryId}`
 | Field | Type | Ghi chú |
@@ -67,10 +72,11 @@ Firebase Project: `finance-ai-app-6df28` · Firestore hiện chạy ở **test m
 | Field | Type | Ghi chú |
 |---|---|---|
 | userId | string | |
-| walletId | string | FK logic → wallets |
-| categoryId | string | FK logic → categories |
+| walletId | string | FK logic → wallets. Với type=`transfer`: đây là **ví nguồn** |
+| categoryId | string | FK logic → categories. Với type=`transfer`: để rỗng `''` (không áp dụng) |
 | amount | number | |
-| type | string | `income` \| `expense` |
+| type | string | `income` \| `expense` \| `transfer` |
+| toWalletId | string? | Chỉ có giá trị khi type == `transfer` — ID của **ví đích** |
 | note | string? | |
 | image | string? | **Đường dẫn file cục bộ trên thiết bị** (không phải URL cloud — xem PRD.md mục 7). Đọc bằng `Image.file(File(path))`, KHÔNG dùng `Image.network()`. |
 | location | string? | |

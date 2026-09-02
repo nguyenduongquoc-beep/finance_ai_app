@@ -12,6 +12,9 @@
 - [x] Bottom Navigation 5 tab + nút "+" nổi
 - [x] Biểu đồ cột + tròn (fl_chart) cho Dashboard
 - [x] firestore.rules mẫu (bảo mật theo userId)
+- [x] Sửa lỗi mất số dư khi "Chuyển & Xóa" ví (Ticket 028 — reassignAndDeleteWallet cộng balance cũ sang ví mới & cập nhật toWalletId)
+- [x] Sửa lỗi Ví thanh toán & Danh mục bị xóa trắng khi mở màn Sửa giao dịch (Ticket 028 — kiểm tra snap.hasData trước khi reset _selectedWalletId/_selectedCategoryId trong StreamBuilder)
+- [x] Tối ưu hiệu năng Stream ở Dashboard & Danh sách giao dịch (Ticket 030 — cache Stream trong state fields, tránh khởi tạo lại listener Firestore khi rebuild UI/gõ ô tìm kiếm/bấm cột biểu đồ)
 
 ## Đang làm / Cần làm tiếp
 

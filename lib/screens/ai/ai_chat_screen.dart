@@ -74,7 +74,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
     final income = transactions.where((t) => t.type == 'income').fold<double>(0, (a, t) => a + t.amount);
     final expense = transactions.where((t) => t.type == 'expense').fold<double>(0, (a, t) => a + t.amount);
-    final totalBalance = wallets.fold<double>(0, (a, w) => a + w.balance);
+    final totalBalance = wallets.where((w) => w.isActive).fold<double>(0, (a, w) => a + w.balance);
 
     final buffer = StringBuffer();
     buffer.writeln('Tổng số dư các ví: ${AppFormatters.number(totalBalance)} đồng');
@@ -82,10 +82,15 @@ class _AiChatScreenState extends State<AiChatScreen> {
     buffer.writeln('Chi tiêu tháng này: ${AppFormatters.number(expense)} đồng');
     buffer.writeln('Tiết kiệm ròng tháng này: ${AppFormatters.number(income - expense)} đồng');
     if (budgets.isNotEmpty) {
+      final Map<String, double> spentByCategory = {};
+      for (final t in transactions.where((t) => t.type == 'expense')) {
+        spentByCategory[t.categoryId] = (spentByCategory[t.categoryId] ?? 0) + t.amount;
+      }
       buffer.writeln('\nTình trạng ngân sách:');
       for (final b in budgets) {
-        final percent = b.limit > 0 ? (b.spent / b.limit * 100).round() : 0;
-        buffer.writeln('- Danh mục ${b.categoryId}: đã chi ${AppFormatters.number(b.spent)}/${AppFormatters.number(b.limit)} đ ($percent%)');
+        final spent = spentByCategory[b.categoryId] ?? 0;
+        final percent = b.limit > 0 ? (spent / b.limit * 100).round() : 0;
+        buffer.writeln('- Danh mục ${b.categoryId}: đã chi ${AppFormatters.number(spent)}/${AppFormatters.number(b.limit)} đ ($percent%)');
       }
     }
     return buffer.toString();
@@ -151,10 +156,10 @@ class _AiChatScreenState extends State<AiChatScreen> {
           appBar: AppBar(
             title: Row(
               children: [
-                CircleAvatar(
+                const CircleAvatar(
                   backgroundColor: AppColors.primary,
                   radius: 18,
-                  child: const Icon(Icons.auto_awesome, color: Colors.white, size: 18),
+                  child: Icon(Icons.auto_awesome, color: Colors.white, size: 18),
                 ),
                 const SizedBox(width: 10),
                 Column(
@@ -251,7 +256,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
-            side: BorderSide(color: AppColors.aiAccent.withOpacity(0.3)),
+            side: BorderSide(color: AppColors.aiAccent.withValues(alpha: 0.3)),
           ),
           onPressed: _isSending ? null : () {
             _sendMessage(suggestions[i]);
@@ -269,7 +274,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
           color: AppColors.card,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.04),
+              color: Colors.black.withValues(alpha: 0.04),
               blurRadius: 10,
               offset: const Offset(0, -3),
             )
@@ -357,7 +362,7 @@ class _ChatBubble extends StatelessWidget {
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.03),
+                    color: Colors.black.withValues(alpha: 0.03),
                     blurRadius: 8,
                     offset: const Offset(0, 3),
                   )
@@ -422,7 +427,7 @@ class _TypingIndicatorState extends State<_TypingIndicator>
               ),
               boxShadow: [
                 BoxShadow(
-                    color: Colors.black.withOpacity(0.03),
+                    color: Colors.black.withValues(alpha: 0.03),
                     blurRadius: 8,
                     offset: const Offset(0, 3))
               ],

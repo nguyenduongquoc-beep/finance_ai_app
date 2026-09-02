@@ -98,6 +98,12 @@ AddTransactionScreen._handleSave()
 ```
 Sửa/xóa giao dịch (`updateTransactionSafely`, `deleteTransaction`) phải hoàn tác đúng các side-effect này để tránh lệch số liệu ví/ngân sách.
 
+**Transfer (chuyển tiền giữa 2 ví)** — xử lý trong cùng `runTransaction()`:
+- `createTransaction`: trừ `amount` khỏi ví nguồn (`walletId`), cộng `amount` vào ví đích (`toWalletId`), dùng `FieldValue.increment()` cho cả hai. **Không** cập nhật budget (transfer không phải income/expense).
+- `updateTransactionSafely`: bước 1 hoàn tác transfer cũ (cộng lại ví nguồn, trừ lại ví đích), bước 2 áp dụng transfer mới — tất cả atomic trong 1 `runTransaction`.
+- `deleteTransaction`: hoàn tác đúng số dư cả 2 ví (cộng lại ví nguồn, trừ lại ví đích).
+- Validate: ví nguồn ≠ ví đích, `toWalletId` không được null/empty.
+
 ### 3.3. Luồng AI
 ```
 Screen → AiService.<method>()

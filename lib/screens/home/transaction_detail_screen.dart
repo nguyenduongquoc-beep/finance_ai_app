@@ -63,11 +63,19 @@ class TransactionDetailScreen extends StatelessWidget {
   Future<Map<String, dynamic>> _loadDetails() async {
     final walletDoc = await FirebaseFirestore.instance.collection('wallets').doc(transaction.walletId).get();
     final categoryDoc = await FirebaseFirestore.instance.collection('categories').doc(transaction.categoryId).get();
+
+    String? toWalletName;
+    if (transaction.type == 'transfer' && transaction.toWalletId != null && transaction.toWalletId!.isNotEmpty) {
+      final toWalletDoc = await FirebaseFirestore.instance.collection('wallets').doc(transaction.toWalletId).get();
+      toWalletName = toWalletDoc.exists ? (toWalletDoc.data()?['walletName'] ?? 'Không rõ') : 'Không rõ';
+    }
+
     return {
       'walletName': walletDoc.exists ? (walletDoc.data()?['walletName'] ?? 'Không rõ') : 'Không rõ',
       'categoryName': categoryDoc.exists ? (categoryDoc.data()?['name'] ?? 'Không rõ') : 'Không rõ',
       'categoryColor': categoryDoc.exists ? (categoryDoc.data()?['color'] as int?) : null,
       'categoryIcon': categoryDoc.exists ? (categoryDoc.data()?['icon'] as String?) : null,
+      'toWalletName': toWalletName,
     };
   }
 
@@ -77,8 +85,11 @@ class TransactionDetailScreen extends StatelessWidget {
       valueListenable: ThemeController.mode,
       builder: (context, _, __) {
         final firestoreService = FirestoreService();
+        final isTransfer = transaction.type == 'transfer';
         final isIncome = transaction.type == 'income';
-        final color = isIncome ? AppColors.income : AppColors.expense;
+        final color = isTransfer
+            ? AppColors.textSecondary
+            : (isIncome ? AppColors.income : AppColors.expense);
 
         return Scaffold(
           backgroundColor: AppColors.background,
@@ -100,6 +111,7 @@ class TransactionDetailScreen extends StatelessWidget {
               final walletName = details['walletName'] ?? 'Không rõ';
               final categoryName = details['categoryName'] ?? 'Không rõ';
               final categoryIcon = details['categoryIcon'];
+              final toWalletName = details['toWalletName'];
 
               return SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
@@ -113,34 +125,40 @@ class TransactionDetailScreen extends StatelessWidget {
                             width: 72,
                             height: 72,
                             decoration: BoxDecoration(
-                              color: color.withOpacity(0.1),
+                              color: color.withValues(alpha: 0.1),
                               shape: BoxShape.circle,
                             ),
                             child: Icon(
-                              getCategoryIcon(categoryIcon, transaction.type),
+                              isTransfer
+                                  ? Icons.swap_horiz
+                                  : getCategoryIcon(categoryIcon, transaction.type),
                               color: color,
                               size: 32,
                             ),
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            isIncome ? 'Số tiền đã thu' : 'Số tiền đã chi',
+                            isTransfer
+                                ? 'Số tiền đã chuyển'
+                                : (isIncome ? 'Số tiền đã thu' : 'Số tiền đã chi'),
                             style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '${isIncome ? '+' : '-'}${AppFormatters.currency(transaction.amount)}',
+                            isTransfer
+                                ? AppFormatters.currency(transaction.amount)
+                                : '${isIncome ? '+' : '-'}${AppFormatters.currency(transaction.amount)}',
                             style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: color),
                           ),
                           const SizedBox(height: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                             decoration: BoxDecoration(
-                              color: color.withOpacity(0.12),
+                              color: color.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Text(
-                              isIncome ? 'Thu nhập' : 'Chi tiêu',
+                              isTransfer ? 'Chuyển tiền' : (isIncome ? 'Thu nhập' : 'Chi tiêu'),
                               style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12),
                             ),
                           ),
@@ -161,42 +179,83 @@ class TransactionDetailScreen extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'Danh mục',
-                              style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
-                            ),
-                            Text(
-                              categoryName,
-                              style: TextStyle(
-                                color: AppColors.textPrimary,
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
+                        if (!isTransfer) ...[
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Danh mục',
+                                style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
                               ),
-                            ),
-                          ],
-                        ),
-                        const Divider(height: 24, thickness: 0.5),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'Ví thanh toán',
-                              style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
-                            ),
-                            Text(
-                              walletName,
-                              style: TextStyle(
-                                color: AppColors.textPrimary,
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
+                              Text(
+                                categoryName,
+                                style: TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const Divider(height: 24, thickness: 0.5),
+                            ],
+                          ),
+                          const Divider(height: 24, thickness: 0.5),
+                        ],
+                        if (isTransfer) ...[
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Từ ví',
+                                style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                              ),
+                              Text(
+                                walletName,
+                                style: TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Divider(height: 24, thickness: 0.5),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Đến ví',
+                                style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                              ),
+                              Text(
+                                toWalletName ?? 'Không rõ',
+                                style: TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Divider(height: 24, thickness: 0.5),
+                        ] else ...[
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Ví thanh toán',
+                                style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                              ),
+                              Text(
+                                walletName,
+                                style: TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Divider(height: 24, thickness: 0.5),
+                        ],
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [

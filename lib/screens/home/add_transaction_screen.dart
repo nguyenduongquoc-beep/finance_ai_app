@@ -434,7 +434,9 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
                 if (snap.hasError) return StreamErrorWidget(error: snap.error.toString());
                 final wallets = snap.data ?? [];
                 
-                if (_selectedWalletId != null && !wallets.any((w) => w.walletId == _selectedWalletId)) {
+                if (snap.hasData &&
+                    _selectedWalletId != null &&
+                    !wallets.any((w) => w.walletId == _selectedWalletId)) {
                   _selectedWalletId = null;
                 }
 
@@ -472,7 +474,8 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
                 final allCategories = snap.data ?? [];
                 final categories = allCategories.where((c) => c.type == _type).toList();
                 
-                if (_selectedCategoryId != null &&
+                if (snap.hasData &&
+                    _selectedCategoryId != null &&
                     !allCategories.any((c) => c.categoryId == _selectedCategoryId)) {
                   _selectedCategoryId = null;
                 }
@@ -725,21 +728,35 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
   Widget _typeToggleButton(String label, String type, Color color) {
     final selected = _type == type;
     return ElevatedButton(
-      onPressed: () => setState(() {
-        _type = type;
-        _selectedCategoryId = null;
-        _selectedWalletId = null;
-        _amountController.clear();
-        _noteController.clear();
-        _locationController.clear();
-        _receiptImageBytes = null;
-        _existingImagePath = null;
-        _walletBalanceExceeded = false;
-        _budgetExceeded = false;
-        _isSaving = false;
-        _isParsing = false;
-        _isValidating = false;
-      }),
+      onPressed: () async {
+        if (widget.transactionToEdit != null && _type == type) {
+          // Màn Sửa: chạm vào nút đang active -> không làm gì, giữ nguyên dữ liệu 100%
+          return;
+        }
+        setState(() {
+          if (widget.transactionToEdit == null) {
+            // Màn Thêm mới: giữ nguyên hành vi cũ (ticket 007)
+            _type = type;
+            _selectedCategoryId = null;
+            _selectedWalletId = null;
+            _amountController.clear();
+            _noteController.clear();
+            _locationController.clear();
+            _receiptImageBytes = null;
+            _existingImagePath = null;
+            _walletBalanceExceeded = false;
+            _budgetExceeded = false;
+            _isSaving = false;
+            _isParsing = false;
+            _isValidating = false;
+          } else {
+            // Màn Sửa: chỉ đổi loại + reset danh mục, giữ nguyên toàn bộ dữ liệu còn lại
+            _type = type;
+            _selectedCategoryId = null;
+          }
+        });
+        await _runValidation();
+      },
       style: ElevatedButton.styleFrom(
         backgroundColor: selected ? color : AppColors.card,
         foregroundColor: selected ? Colors.white : AppColors.textSecondary,

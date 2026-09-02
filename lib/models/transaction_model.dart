@@ -5,12 +5,13 @@
 class AppTransaction {
   final String transactionId;
   final String userId;
-  final String walletId;
-  final String categoryId;
+  final String walletId; // Với type='transfer': VÍ NGUỒN
+  final String categoryId; // Với type='transfer': để rỗng '' (không áp dụng)
   final double amount;
-  final String type; // income | expense
+  final String type; // income | expense | transfer
+  final String? toWalletId; // Chỉ có giá trị khi type == 'transfer' (VÍ ĐÍCH)
   final String? note;
-  final String? image; // URL ảnh hóa đơn trên Firebase Storage
+  final String? image; // Path/URL ảnh hóa đơn
   final String? location;
   final DateTime date;
 
@@ -21,6 +22,7 @@ class AppTransaction {
     required this.categoryId,
     required this.amount,
     required this.type,
+    this.toWalletId,
     this.note,
     this.image,
     this.location,
@@ -35,6 +37,7 @@ class AppTransaction {
       categoryId: map['categoryId'] ?? '',
       amount: (map['amount'] ?? 0).toDouble(),
       type: map['type'] ?? 'expense',
+      toWalletId: map['toWalletId'],
       note: map['note'],
       image: map['image'],
       location: map['location'],
@@ -49,6 +52,7 @@ class AppTransaction {
       'categoryId': categoryId,
       'amount': amount,
       'type': type,
+      'toWalletId': toWalletId,
       'note': note,
       'image': image,
       'location': location,

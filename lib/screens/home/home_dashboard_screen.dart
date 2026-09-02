@@ -30,6 +30,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   late int _selectedYear;
   late int _selectedHalf; // 1 = Th1-Th6, 2 = Th7-Th12
 
+  late final String _uid;
+  final _firestoreService = FirestoreService();
+  late final Stream<AppUser?> _userStream;
+  late final Stream<List<Wallet>> _walletsStream;
+  late final Stream<List<Category>> _categoriesStream;
+  late final Stream<List<AppTransaction>> _currentMonthTxStream;
+  late Stream<List<AppTransaction>> _sixMonthTxStream;
+
   @override
   void initState() {
     super.initState();
@@ -37,6 +45,20 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     _selectedYear = now.year;
     _selectedHalf = now.month <= 6 ? 1 : 2;
     _selectedMonthIndex = _defaultMonthIndex();
+
+    _uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    _userStream = _firestoreService.streamUserProfile(_uid);
+    _walletsStream = _firestoreService.streamWallets(_uid);
+    _categoriesStream = _firestoreService.streamCategories(_uid);
+    _currentMonthTxStream = _firestoreService.streamTransactions(
+      _uid,
+      from: DateTime(now.year, now.month, 1),
+    );
+    _sixMonthTxStream = _firestoreService.streamTransactions(_uid, from: _filterFrom, to: _filterTo);
+  }
+
+  void _refreshSixMonthStream() {
+    _sixMonthTxStream = _firestoreService.streamTransactions(_uid, from: _filterFrom, to: _filterTo);
   }
 
   /// Tính index mặc định: tháng hiện tại trong khối, hoặc tháng cuối cùng
@@ -119,8 +141,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: ThemeController.mode,
       builder: (context, _, __) {
-        final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-        final firestoreService = FirestoreService();
         final now = DateTime.now();
         final currentMonthStart = DateTime(now.year, now.month, 1);
 
@@ -128,21 +148,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           backgroundColor: AppColors.background,
           body: SafeArea(
             child: StreamBuilder<AppUser?>(
-              stream: firestoreService.streamUserProfile(uid),
+              stream: _userStream,
               builder: (context, userSnap) {
                 if (userSnap.hasError) return StreamErrorWidget(error: userSnap.error.toString());
                 final user = userSnap.data;
 
                 return StreamBuilder<List<Wallet>>(
-                  stream: firestoreService.streamWallets(uid),
+                  stream: _walletsStream,
                   builder: (context, walletSnap) {
                     if (walletSnap.hasError) return StreamErrorWidget(error: walletSnap.error.toString());
                     final wallets = walletSnap.data ?? [];
-                    final totalBalance = wallets.fold<double>(0, (a, w) => a + w.balance);
+                    final totalBalance = wallets.where((w) => w.isActive).fold<double>(0, (a, w) => a + w.balance);
 
                     // Load transactions cho khối 6 tháng đang chọn
                     return StreamBuilder<List<AppTransaction>>(
-                      stream: firestoreService.streamTransactions(uid, from: _filterFrom, to: _filterTo),
+                      stream: _sixMonthTxStream,
                       builder: (context, txSnap) {
                         if (txSnap.hasError) return StreamErrorWidget(error: txSnap.error.toString());
                         final allTx = txSnap.data ?? [];
@@ -165,7 +185,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                               .fold<double>(0, (a, t) => a + t.amount);
 
                           return StreamBuilder<List<Category>>(
-                            stream: firestoreService.streamCategories(uid),
+                            stream: _categoriesStream,
                             builder: (context, catSnap) {
                               if (catSnap.hasError) return StreamErrorWidget(error: catSnap.error.toString());
                               final categories = catSnap.data ?? [];
@@ -185,7 +205,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           );
                         } else {
                           return StreamBuilder<List<AppTransaction>>(
-                            stream: firestoreService.streamTransactions(uid, from: currentMonthStart),
+                            stream: _currentMonthTxStream,
                             builder: (context, currentTxSnap) {
                               final currentTx = currentTxSnap.data ?? [];
                               final income = currentTx
@@ -196,7 +216,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                   .fold<double>(0, (a, t) => a + t.amount);
 
                               return StreamBuilder<List<Category>>(
-                                stream: firestoreService.streamCategories(uid),
+                                stream: _categoriesStream,
                                 builder: (context, catSnap) {
                                   if (catSnap.hasError) return StreamErrorWidget(error: catSnap.error.toString());
                                   final categories = catSnap.data ?? [];
@@ -463,6 +483,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 setState(() {
                   _selectedYear = y;
                   _selectedMonthIndex = _defaultMonthIndex();
+                  _refreshSixMonthStream();
                 });
               },
             ),
@@ -480,6 +501,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 setState(() {
                   _selectedHalf = selection.first;
                   _selectedMonthIndex = _defaultMonthIndex();
+                  _refreshSixMonthStream();
                 });
               },
               style: ButtonStyle(

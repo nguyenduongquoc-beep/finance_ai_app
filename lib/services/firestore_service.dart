@@ -63,6 +63,15 @@ class FirestoreService {
     return _db.collection('wallets').doc(walletId).delete();
   }
 
+  /// Ẩn hoặc khôi phục hiển thị 1 ví — dùng thay cho xóa cứng khi ví đã có
+  /// giao dịch, để giữ nguyên lịch sử giao dịch cũ (xem RULES.md nguyên tắc Wallet).
+  Future<void> setWalletActive(String walletId, bool isActive) {
+    return _db.collection('wallets').doc(walletId).update({
+      'isActive': isActive,
+      'updatedAt': DateTime.now().toIso8601String(),
+    });
+  }
+
   Future<bool> checkWalletInUse(String userId, String walletId) async {
     final txQuery = await _db
         .collection('transactions')
@@ -74,15 +83,42 @@ class FirestoreService {
   }
 
   Future<void> reassignAndDeleteWallet(String userId, String oldWalletId, String newWalletId) async {
+    final oldWalletDoc = await _db.collection('wallets').doc(oldWalletId).get();
+    if (!oldWalletDoc.exists) {
+      throw Exception('Ví nguồn không tồn tại');
+    }
+    final oldBalance = (oldWalletDoc.data()!['balance'] as num).toDouble();
+
+    // Giao dịch mà ví này là ví thực hiện (walletId)
     final txQuery = await _db
         .collection('transactions')
         .where('userId', isEqualTo: userId)
         .where('walletId', isEqualTo: oldWalletId)
         .get();
+
+    // Giao dịch chuyển tiền mà ví này là ví ĐÍCH (toWalletId)
+    final transferToQuery = await _db
+        .collection('transactions')
+        .where('userId', isEqualTo: userId)
+        .where('toWalletId', isEqualTo: oldWalletId)
+        .get();
+
     final batch = _db.batch();
     for (var doc in txQuery.docs) {
       batch.update(doc.reference, {'walletId': newWalletId});
     }
+    for (var doc in transferToQuery.docs) {
+      batch.update(doc.reference, {'toWalletId': newWalletId});
+    }
+
+    // QUAN TRỌNG: chuyển toàn bộ số dư ví cũ sang ví mới TRƯỚC khi xóa,
+    // để tiền không biến mất khỏi tổng tài sản.
+    if (oldBalance != 0) {
+      batch.update(_db.collection('wallets').doc(newWalletId), {
+        'balance': FieldValue.increment(oldBalance),
+      });
+    }
+
     batch.delete(_db.collection('wallets').doc(oldWalletId));
     await batch.commit();
   }
@@ -163,9 +199,19 @@ class FirestoreService {
 
   // ---------------- TRANSACTIONS ----------------
   Future<String> createTransaction(AppTransaction tx) async {
-    // Create a reference for the new transaction document (not yet written)
     final txRef = _db.collection('transactions').doc();
     final walletRef = _db.collection('wallets').doc(tx.walletId);
+    DocumentReference? toWalletRef;
+
+    if (tx.type == 'transfer') {
+      if (tx.toWalletId == null || tx.toWalletId!.isEmpty) {
+        throw Exception('Giao dịch chuyển tiền cần chỉ định ví đích');
+      }
+      if (tx.toWalletId == tx.walletId) {
+        throw Exception('Ví nguồn và ví đích không được trùng nhau');
+      }
+      toWalletRef = _db.collection('wallets').doc(tx.toWalletId);
+    }
 
     DocumentReference? budgetRef;
     final monthStr = DateFormat('MM/yyyy').format(tx.date);
@@ -177,50 +223,45 @@ class FirestoreService {
           .where('month', isEqualTo: monthStr)
           .limit(1)
           .get();
-      if (budgetQuery.docs.isNotEmpty) {
-        budgetRef = budgetQuery.docs.first.reference;
-      }
+      if (budgetQuery.docs.isNotEmpty) budgetRef = budgetQuery.docs.first.reference;
     }
 
     await _db.runTransaction((transaction) async {
-      // Read wallet (required before write in Firestore transaction)
       final walletSnap = await transaction.get(walletRef);
-      if (!walletSnap.exists) {
-        throw Exception('Ví không tồn tại');
+      if (!walletSnap.exists) throw Exception('Ví không tồn tại');
+      if (toWalletRef != null) {
+        final toWalletSnap = await transaction.get(toWalletRef);
+        if (!toWalletSnap.exists) throw Exception('Ví đích không tồn tại');
       }
-      DocumentSnapshot? budgetSnap;
-      if (budgetRef != null) {
-        budgetSnap = await transaction.get(budgetRef);
-      }
-
-      // Write transaction document
       transaction.set(txRef, tx.toMap());
 
-      // Update wallet balance
-      final delta = tx.type == 'income' ? tx.amount : -tx.amount;
-      final currentBalance = (walletSnap.data() as Map<String, dynamic>)['balance'] as num;
-      transaction.update(walletRef, {'balance': currentBalance + delta});
-
-      // Update budget spent if applicable
-      if (budgetRef != null && budgetSnap != null && budgetSnap.exists) {
-        final currentSpent = (budgetSnap.data() as Map<String, dynamic>)['spent'] as num;
-        transaction.update(budgetRef, {'spent': currentSpent + tx.amount});
+      switch (tx.type) {
+        case 'income':
+          transaction.update(walletRef, {'balance': FieldValue.increment(tx.amount)});
+          break;
+        case 'expense':
+          transaction.update(walletRef, {'balance': FieldValue.increment(-tx.amount)});
+          break;
+        case 'transfer':
+          transaction.update(walletRef, {'balance': FieldValue.increment(-tx.amount)});
+          transaction.update(toWalletRef!, {'balance': FieldValue.increment(tx.amount)});
+          break;
       }
     });
 
-    // After transaction commits, check for budget warning (outside transaction)
     if (tx.type == 'expense' && budgetRef != null) {
       final updatedBudget = await budgetRef.get();
       final data = updatedBudget.data() as Map<String, dynamic>?;
       if (data != null) {
         final limit = (data['limit'] as num).toDouble();
-        final spent = (data['spent'] as num).toDouble();
-        if (spent > limit * 0.9 && spent - tx.amount <= limit * 0.9) {
+        final newSpent = await getCategorySpentThisMonth(tx.userId, tx.categoryId, month: tx.date);
+        final oldSpent = newSpent - tx.amount;
+        if (limit > 0 && newSpent >= limit * 0.8 && oldSpent < limit * 0.8) {
           await createNotification(AppNotification(
             notificationId: '',
-            userId: data['userId'],
+            userId: tx.userId,
             title: 'Cảnh báo ngân sách',
-            content: 'Bạn đã tiêu vượt 90% ngân sách tháng $monthStr cho danh mục này.',
+            content: 'Bạn đã tiêu vượt 80% ngân sách tháng $monthStr cho danh mục này.',
             status: 'unread',
             type: 'budget',
             createdAt: DateTime.now(),
@@ -265,85 +306,78 @@ class FirestoreService {
     AppTransaction oldTx,
     AppTransaction newTx,
   ) async {
-    // Để có thể đọc trong transaction, ta query budget refs trước
-    final monthStrOld = DateFormat('MM/yyyy').format(oldTx.date);
     final monthStrNew = DateFormat('MM/yyyy').format(newTx.date);
-    
-    final oldBudgetQuery = await _db
-        .collection('budgets')
-        .where('userId', isEqualTo: oldTx.userId)
-        .where('categoryId', isEqualTo: oldTx.categoryId)
-        .where('month', isEqualTo: monthStrOld)
-        .limit(1)
-        .get();
-        
-    final newBudgetQuery = await _db
-        .collection('budgets')
-        .where('userId', isEqualTo: newTx.userId)
-        .where('categoryId', isEqualTo: newTx.categoryId)
-        .where('month', isEqualTo: monthStrNew)
-        .limit(1)
-        .get();
 
-    final DocumentReference? oldBudgetRef = oldBudgetQuery.docs.isNotEmpty ? oldBudgetQuery.docs.first.reference : null;
-    final DocumentReference? newBudgetRef = newBudgetQuery.docs.isNotEmpty ? newBudgetQuery.docs.first.reference : null;
-
-    await _db.runTransaction((txn) async {
-      // 1. Hoàn tác ảnh hưởng của oldTx
-      if (oldTx.type == 'expense') {
-        txn.update(_db.collection('wallets').doc(oldTx.walletId), {
-          'balance': FieldValue.increment(oldTx.amount),
-        });
-        if (oldBudgetRef != null) {
-          txn.update(oldBudgetRef, {
-            'spent': FieldValue.increment(-oldTx.amount),
-          });
-        }
-      } else {
-        txn.update(_db.collection('wallets').doc(oldTx.walletId), {
-          'balance': FieldValue.increment(-oldTx.amount),
-        });
-      }
-
-      // 2. Áp dụng ảnh hưởng của newTx
-      if (newTx.type == 'expense') {
-        txn.update(_db.collection('wallets').doc(newTx.walletId), {
-          'balance': FieldValue.increment(-newTx.amount),
-        });
-        if (newBudgetRef != null) {
-          txn.update(newBudgetRef, {
-            'spent': FieldValue.increment(newTx.amount),
-          });
-        }
-      } else {
-        txn.update(_db.collection('wallets').doc(newTx.walletId), {
-          'balance': FieldValue.increment(newTx.amount),
-        });
-      }
-
-      // 3. Cập nhật transaction doc
-      txn.update(_db.collection('transactions').doc(newTx.transactionId), newTx.toMap());
-    });
-    
-    // Gửi thông báo nếu vượt ngân sách sau khi update
+    DocumentReference? newBudgetRef;
     if (newTx.type == 'expense') {
-      final updatedBudgetQuery = await _db
+      final q = await _db
           .collection('budgets')
           .where('userId', isEqualTo: newTx.userId)
           .where('categoryId', isEqualTo: newTx.categoryId)
           .where('month', isEqualTo: monthStrNew)
           .limit(1)
           .get();
-      if (updatedBudgetQuery.docs.isNotEmpty) {
-        final doc = updatedBudgetQuery.docs.first;
-        final limit = (doc.data()['limit'] as num).toDouble();
-        final spent = (doc.data()['spent'] as num).toDouble();
-        if (spent > limit * 0.9 && spent - newTx.amount <= limit * 0.9) {
+      if (q.docs.isNotEmpty) newBudgetRef = q.docs.first.reference;
+    }
+
+    await _db.runTransaction((txn) async {
+      // 1. Hoàn tác ảnh hưởng của oldTx
+      switch (oldTx.type) {
+        case 'expense':
+          txn.update(_db.collection('wallets').doc(oldTx.walletId),
+              {'balance': FieldValue.increment(oldTx.amount)});
+          break;
+        case 'income':
+          txn.update(_db.collection('wallets').doc(oldTx.walletId),
+              {'balance': FieldValue.increment(-oldTx.amount)});
+          break;
+        case 'transfer':
+          txn.update(_db.collection('wallets').doc(oldTx.walletId),
+              {'balance': FieldValue.increment(oldTx.amount)});
+          if (oldTx.toWalletId != null) {
+            txn.update(_db.collection('wallets').doc(oldTx.toWalletId),
+                {'balance': FieldValue.increment(-oldTx.amount)});
+          }
+          break;
+      }
+
+      // 2. Áp dụng ảnh hưởng của newTx
+      switch (newTx.type) {
+        case 'expense':
+          txn.update(_db.collection('wallets').doc(newTx.walletId),
+              {'balance': FieldValue.increment(-newTx.amount)});
+          break;
+        case 'income':
+          txn.update(_db.collection('wallets').doc(newTx.walletId),
+              {'balance': FieldValue.increment(newTx.amount)});
+          break;
+        case 'transfer':
+          txn.update(_db.collection('wallets').doc(newTx.walletId),
+              {'balance': FieldValue.increment(-newTx.amount)});
+          if (newTx.toWalletId != null) {
+            txn.update(_db.collection('wallets').doc(newTx.toWalletId),
+                {'balance': FieldValue.increment(newTx.amount)});
+          }
+          break;
+      }
+
+      txn.update(_db.collection('transactions').doc(newTx.transactionId), newTx.toMap());
+    });
+
+    if (newTx.type == 'expense' && newBudgetRef != null) {
+      final budgetDoc = await newBudgetRef.get();
+      final data = budgetDoc.data() as Map<String, dynamic>?;
+      if (data != null) {
+        final limit = (data['limit'] as num).toDouble();
+        final newSpent = await getCategorySpentThisMonth(newTx.userId, newTx.categoryId, month: newTx.date);
+        final delta = newTx.categoryId == oldTx.categoryId ? (newTx.amount - oldTx.amount) : newTx.amount;
+        final oldSpent = newSpent - delta;
+        if (limit > 0 && newSpent >= limit * 0.8 && oldSpent < limit * 0.8) {
           await createNotification(AppNotification(
             notificationId: '',
-            userId: doc.data()['userId'],
+            userId: newTx.userId,
             title: 'Cảnh báo ngân sách',
-            content: 'Giao dịch vừa sửa đã làm bạn tiêu vượt 90% ngân sách tháng $monthStrNew cho danh mục này.',
+            content: 'Giao dịch vừa sửa đã làm bạn tiêu vượt 80% ngân sách tháng $monthStrNew cho danh mục này.',
             status: 'unread',
             type: 'budget',
             createdAt: DateTime.now(),
@@ -356,23 +390,25 @@ class FirestoreService {
   Future<void> deleteTransaction(AppTransaction tx) async {
     await _db.collection('transactions').doc(tx.transactionId).delete();
 
-    // 1. Hoàn lại số dư ví
-    final delta = tx.type == 'income' ? -tx.amount : tx.amount;
-    await adjustWalletBalance(tx.walletId, delta);
-
-    // 2. Hoàn lại số tiền đã tiêu trong ngân sách (nếu là chi tiêu)
-    if (tx.type == 'expense') {
-      final monthStr = DateFormat('MM/yyyy').format(tx.date);
-      await adjustBudgetSpent(tx.userId, tx.categoryId, monthStr, -tx.amount);
+    switch (tx.type) {
+      case 'income':
+        await adjustWalletBalance(tx.walletId, -tx.amount);
+        break;
+      case 'expense':
+        await adjustWalletBalance(tx.walletId, tx.amount);
+        break;
+      case 'transfer':
+        await adjustWalletBalance(tx.walletId, tx.amount);
+        if (tx.toWalletId != null && tx.toWalletId!.isNotEmpty) {
+          await adjustWalletBalance(tx.toWalletId!, -tx.amount);
+        }
+        break;
     }
 
-    // 3. Xóa ảnh local nếu có
     if (tx.image != null && tx.image!.isNotEmpty) {
       try {
         await StorageService().deleteImageByUrl(tx.image!);
-      } catch (_) {
-        // ignore errors
-      }
+      } catch (_) {}
     }
   }
 
@@ -403,37 +439,31 @@ class FirestoreService {
     return _db.collection('budgets').doc(budgetId).delete();
   }
 
-  /// Cập nhật số tiền đã chi tiêu của ngân sách (khi có giao dịch mới/xóa)
-  Future<void> adjustBudgetSpent(String userId, String categoryId, String month, double delta) async {
-    final query = await _db
-        .collection('budgets')
+  /// Tính tổng chi tiêu (expense) của 1 category trong 1 tháng cụ thể —
+  /// tính ĐỘNG từ transactions, không đọc field spent (đã bỏ khỏi Budget).
+  Future<double> getCategorySpentThisMonth(
+    String userId,
+    String categoryId, {
+    DateTime? month,
+  }) async {
+    final target = month ?? DateTime.now();
+    final monthStart = DateTime(target.year, target.month, 1);
+    final monthEnd = DateTime(target.year, target.month + 1, 1).subtract(const Duration(seconds: 1));
+    final txQuery = await _db
+        .collection('transactions')
         .where('userId', isEqualTo: userId)
-        .where('categoryId', isEqualTo: categoryId)
-        .where('month', isEqualTo: month)
-        .limit(1)
+        .where('date', isGreaterThanOrEqualTo: monthStart.toIso8601String())
+        .where('date', isLessThanOrEqualTo: monthEnd.toIso8601String())
+        .orderBy('date', descending: true)
         .get();
-    if (query.docs.isNotEmpty) {
-      final doc = query.docs.first;
-      final limit = (doc.data()['limit'] as num).toDouble();
-      final oldSpent = (doc.data()['spent'] as num).toDouble();
-      final newSpent = oldSpent + delta;
-      
-      await doc.reference.update({
-        'spent': FieldValue.increment(delta),
-      });
-
-      if (delta > 0 && oldSpent <= limit * 0.9 && newSpent > limit * 0.9) {
-        await createNotification(AppNotification(
-          notificationId: '',
-          userId: doc.data()['userId'],
-          title: 'Cảnh báo ngân sách',
-          content: 'Bạn đã tiêu vượt 90% ngân sách tháng $month cho danh mục này.',
-          status: 'unread',
-          type: 'budget',
-          createdAt: DateTime.now(),
-        ));
+    double total = 0;
+    for (final doc in txQuery.docs) {
+      final data = doc.data();
+      if (data['type'] == 'expense' && data['categoryId'] == categoryId) {
+        total += (data['amount'] as num).toDouble();
       }
     }
+    return total;
   }
 
   // ---------------- SAVING GOALS ----------------
@@ -500,11 +530,7 @@ class FirestoreService {
     return Budget.fromMap(doc.data(), doc.id);
   }
 
-  /// Lấy số tiền đã chi tiêu của một danh mục (budget) hiện tại
-  Future<double> getCategoryBudgetSpent(String userId, String categoryId) async {
-    final budget = await getCategoryBudget(userId, categoryId);
-    return budget?.spent ?? 0;
-  }
+
 
   Future<void> markNotificationRead(String notificationId) {
     return _db

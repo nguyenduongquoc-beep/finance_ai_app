@@ -38,6 +38,10 @@ class AppColors {
   static const Color darkTextPrimary = Color(0xFFFFFFFF);
   static const Color darkTextSecondary = Color(0xFFB0BEC5);
   static const Color darkDivider = Color(0xFF1E3A5F);
+
+  // Màn Báo cáo AI (Hero card)
+  static const Color reportDark = Color(0xFF16283A);
+  static const Color reportDarkGreenText = Color(0xFF047857);
 }
 
 class AppStrings {

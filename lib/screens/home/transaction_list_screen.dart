@@ -28,6 +28,22 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
   DateTime? _selectedDate;    // ngày cụ thể được chọn (null = không lọc theo ngày)
   DateTime? _selectedMonth;   // tháng cụ thể được chọn (null = không lọc theo tháng)
 
+  late final String _uid;
+  late Stream<List<AppTransaction>> _transactionsStream;
+  late final Stream<List<Category>> _categoriesStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    _categoriesStream = _firestoreService.streamCategories(_uid);
+    _transactionsStream = _buildStream(_uid);
+  }
+
+  void _refreshTransactionsStream() {
+    _transactionsStream = _buildStream(_uid);
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -87,6 +103,7 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
       setState(() {
         _selectedDate = picked;
         _selectedMonth = null;
+        _refreshTransactionsStream();
       });
     }
   }
@@ -159,6 +176,7 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
       setState(() {
         _selectedMonth = DateTime(selectedYearVal, selectedMonthVal, 1);
         _selectedDate = null;
+        _refreshTransactionsStream();
       });
     }
   }
@@ -255,8 +273,6 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: ThemeController.mode,
       builder: (context, _, __) {
-        final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-
         return Scaffold(
           backgroundColor: AppColors.background,
           appBar: AppBar(
@@ -349,6 +365,7 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
                     setState(() {
                       _selectedDate = null;
                       _selectedMonth = null;
+                      _refreshTransactionsStream();
                     });
                   },
                 ),
@@ -358,7 +375,7 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
           // Transaction List
           Expanded(
             child: StreamBuilder<List<AppTransaction>>(
-              stream: _buildStream(uid),
+              stream: _transactionsStream,
               builder: (context, txSnap) {
                 if (txSnap.hasError) return StreamErrorWidget(error: txSnap.error.toString());
                 if (!txSnap.hasData) {
@@ -376,7 +393,7 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
                 }
                 
                 return StreamBuilder<List<Category>>(
-                  stream: _firestoreService.streamCategories(uid),
+                  stream: _categoriesStream,
                   builder: (context, catSnap) {
                     if (catSnap.hasError) return StreamErrorWidget(error: catSnap.error.toString());
                     final categories = catSnap.data ?? [];

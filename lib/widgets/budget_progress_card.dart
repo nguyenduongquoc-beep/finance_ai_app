@@ -5,148 +5,88 @@ import '../models/category_model.dart';
 import '../utils/constants.dart';
 import '../utils/formatters.dart';
 
-/// Widget hiển thị tiến độ ngân sách theo danh mục (thanh progress bar)
-/// Cảnh báo màu đỏ khi vượt 90% (isNearLimit) hoặc vượt hạn mức (isOverBudget)
+/// Widget hiển thị hạn mức chi tiêu chi tiết theo danh mục (khớp mockup Figma)
 class BudgetProgressCard extends StatelessWidget {
   final Budget budget;
+  final double spentAmount;
   final Category? category;
   final VoidCallback? onTap;
 
   const BudgetProgressCard({
     super.key,
     required this.budget,
+    required this.spentAmount,
     this.category,
     this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isOver = budget.isOverBudget;
-    final isNear = budget.isNearLimit;
+    final isOver = budget.isOverBudget(spentAmount);
+    final isNear = budget.isNearLimit(spentAmount);
+    final percent = budget.percentUsed(spentAmount);
 
     final Color barColor = isOver
         ? AppColors.expense
         : isNear
-            ? AppColors.warning
-            : AppColors.primary;
-
-    final Color bgColor = isOver
-        ? AppColors.expense.withOpacity(0.06)
-        : isNear
-            ? AppColors.warning.withOpacity(0.06)
-            : Colors.white;
-
-    final Border? cardBorder = isOver
-        ? Border.all(color: AppColors.expense.withOpacity(0.4), width: 1.5)
-        : isNear
-            ? Border.all(color: AppColors.warning.withOpacity(0.4), width: 1.5)
-            : null;
+            ? const Color(0xFFF59E0B)
+            : const Color(0xFF10B981);
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(16),
-        border: cardBorder,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          )
-        ],
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isOver
+              ? AppColors.expense.withValues(alpha: 0.3)
+              : isNear
+                  ? const Color(0xFFF59E0B).withValues(alpha: 0.3)
+                  : Colors.grey.shade200,
+          width: isOver || isNear ? 1.5 : 1.0,
+        ),
       ),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Category icon or initial
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: barColor.withOpacity(0.12),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Center(
-                      child: Text(
-                        (category?.name ?? 'K').substring(0, 1).toUpperCase(),
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: barColor,
-                          fontSize: 15,
-                        ),
+                  Expanded(
+                    child: Text(
+                      category?.name ?? 'Danh mục',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: AppColors.textPrimary,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                category?.name ?? 'Danh mục',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600, fontSize: 15),
-                              ),
-                            ),
-                            if (isOver)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: AppColors.expense,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Text('Vượt hạn mức!',
-                                    style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold)),
-                              )
-                            else if (isNear)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: AppColors.warning,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Text('Sắp vượt!',
-                                    style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold)),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${AppFormatters.currency(budget.spent)} / ${AppFormatters.currency(budget.limit)}',
-                          style: TextStyle(
-                              fontSize: 12, color: AppColors.textSecondary),
-                        ),
-                      ],
+                  const SizedBox(width: 8),
+                  Text(
+                    '${AppFormatters.number(spentAmount)} VNĐ/ ${AppFormatters.number(budget.limit)} VNĐ',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
               LinearPercentIndicator(
-                lineHeight: 10,
-                percent: budget.percentUsed.clamp(0.0, 1.0),
-                backgroundColor: Colors.grey.shade200,
+                lineHeight: 8,
+                percent: percent.clamp(0.0, 1.0),
+                backgroundColor: Colors.grey.shade100,
                 progressColor: barColor,
-                barRadius: const Radius.circular(6),
+                barRadius: const Radius.circular(4),
                 padding: EdgeInsets.zero,
                 animation: true,
                 animationDuration: 600,
@@ -156,37 +96,24 @@ class BudgetProgressCard extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    '${(budget.percentUsed * 100).round()}% đã sử dụng',
+                    'Đã dùng ${(percent * 100).round()}%',
                     style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                  if (isOver)
+                    Text(
+                      'Đã vượt ${AppFormatters.currency(spentAmount - budget.limit)}',
+                      style: const TextStyle(
                         fontSize: 12,
-                        color: barColor,
-                        fontWeight: isNear || isOver ? FontWeight.w600 : FontWeight.normal),
-                  ),
-                  Text(
-                    'Còn lại: ${AppFormatters.currency((budget.limit - budget.spent).clamp(0, double.infinity))}',
-                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                  ),
+                        color: AppColors.expense,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                 ],
               ),
-              if (isOver || isNear) ...[
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Icon(
-                      isOver ? Icons.error_outline : Icons.warning_amber_outlined,
-                      size: 14,
-                      color: barColor,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      isOver
-                          ? 'Đã vượt hạn mức ${AppFormatters.currency(budget.spent - budget.limit)}'
-                          : 'Hãy cẩn thận — chỉ còn ${AppFormatters.currency(budget.limit - budget.spent)} trong ngân sách',
-                      style: TextStyle(fontSize: 11, color: barColor),
-                    ),
-                  ],
-                ),
-              ],
             ],
           ),
         ),

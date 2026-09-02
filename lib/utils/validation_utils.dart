@@ -21,7 +21,8 @@ class ValidationUtils {
   }) async {
     final budget = await firestoreService.getCategoryBudget(userId, categoryId);
     if (budget == null) return false; // No budget defined for this category.
-    final projectedSpent = budget.spent + amount;
+    final currentSpent = await firestoreService.getCategorySpentThisMonth(userId, categoryId);
+    final projectedSpent = currentSpent + amount;
     return projectedSpent > budget.limit;
   }
 }

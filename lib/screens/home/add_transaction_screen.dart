@@ -48,7 +48,8 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   String? _existingImagePath;
   bool _isSaving = false;
   bool _walletBalanceExceeded = false;
-  bool _budgetExceeded = false;
+  BudgetValidationStatus _budgetStatus = BudgetValidationStatus.ok;
+  int _budgetProjectedPercent = 0;
   bool _isParsing = false;
   bool _isValidating = false;
 
@@ -133,7 +134,10 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
         AppSnackbar.show(context, 'Không thể trích xuất thông tin hoá đơn', isError: true);
       }
     } catch (e) {
-      AppSnackbar.show(context, 'Lỗi khi trích xuất hoá đơn: $e', isError: true);
+      final msg = AiService.isNoNetworkException(e)
+          ? 'Không có kết nối mạng. Vui lòng kiểm tra Internet và thử lại.'
+          : 'Lỗi khi trích xuất hoá đơn: $e';
+      AppSnackbar.show(context, msg, isError: true);
     }
     setState(() => _isParsing = false);
     await _runValidation();
@@ -171,7 +175,8 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
       if (_type == 'income') {
         setState(() {
           _walletBalanceExceeded = false;
-          _budgetExceeded = false;
+          _budgetStatus = BudgetValidationStatus.ok;
+          _budgetProjectedPercent = 0;
         });
         return;
       }
@@ -185,19 +190,23 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
         setState(() => _walletBalanceExceeded = exceed);
       }
       if (_selectedCategoryId != null) {
-        final exceed = await ValidationUtils.exceedsCategoryBudget(
+        final result = await ValidationUtils.checkCategoryBudgetStatus(
           userId: uid,
           categoryId: _selectedCategoryId!,
           amount: amount,
           firestoreService: _firestoreService,
         );
-        setState(() => _budgetExceeded = exceed);
+        setState(() {
+          _budgetStatus = result.status;
+          _budgetProjectedPercent = result.percent;
+        });
       }
     } catch (e) {
       debugPrint('⚠️ Lỗi khi kiểm tra vượt số dư ví/ngân sách: $e');
       setState(() {
         _walletBalanceExceeded = false;
-        _budgetExceeded = false;
+        _budgetStatus = BudgetValidationStatus.ok;
+        _budgetProjectedPercent = 0;
       });
     } finally {
       if (mounted) {
@@ -251,7 +260,7 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
       AppSnackbar.show(context, 'Số tiền vượt quá số dư ví', isError: true);
       return;
     }
-    if (_budgetExceeded) {
+    if (_budgetStatus == BudgetValidationStatus.exceeded) {
       AppSnackbar.show(context, 'Giao dịch sẽ vượt quá ngân sách danh mục', isError: true);
       return;
     }
@@ -506,7 +515,7 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
                 );
               },
             ),
-            if (_budgetExceeded)
+            if (_budgetStatus == BudgetValidationStatus.nearLimit)
               Container(
                 margin: const EdgeInsets.only(top: 8),
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -515,14 +524,36 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: AppColors.warning.withOpacity(0.3)),
                 ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Giao dịch này sẽ khiến bạn đạt $_budgetProjectedPercent% ngân sách danh mục',
+                        style: const TextStyle(color: AppColors.warning, fontSize: 13, fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (_budgetStatus == BudgetValidationStatus.exceeded)
+              Container(
+                margin: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppColors.expense.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.expense.withOpacity(0.3)),
+                ),
                 child: const Row(
                   children: [
-                    Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: 18),
+                    Icon(Icons.warning_amber_rounded, color: AppColors.expense, size: 18),
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'Giao dịch sẽ vượt quá ngân sách danh mục',
-                        style: TextStyle(color: AppColors.warning, fontSize: 13, fontWeight: FontWeight.w500),
+                        style: TextStyle(color: AppColors.expense, fontSize: 13, fontWeight: FontWeight.w500),
                       ),
                     ),
                   ],
@@ -708,7 +739,7 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   elevation: 0,
                 ),
-                onPressed: (_isSaving || _isParsing || _isValidating) ? null : _handleSave,
+                onPressed: (_isSaving || _isParsing || _isValidating || _budgetStatus == BudgetValidationStatus.exceeded || _walletBalanceExceeded) ? null : _handleSave,
                 child: _isSaving
                     ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                     : Text(
@@ -745,7 +776,8 @@ final picked = await _picker.pickImage(source: source, imageQuality: 70);
             _receiptImageBytes = null;
             _existingImagePath = null;
             _walletBalanceExceeded = false;
-            _budgetExceeded = false;
+            _budgetStatus = BudgetValidationStatus.ok;
+            _budgetProjectedPercent = 0;
             _isSaving = false;
             _isParsing = false;
             _isValidating = false;

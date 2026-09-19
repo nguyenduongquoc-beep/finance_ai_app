@@ -84,7 +84,7 @@ class _BudgetSetupScreenState extends State<BudgetSetupScreen> {
         _drafts.add(_BudgetItemDraft(
           budgetId: b.budgetId,
           categoryId: b.categoryId,
-          categoryName: cat?.name ?? 'Danh mục',
+          categoryName: cat?.name ?? 'Danh mục (Đã bị xóa)',
           limit: b.limit,
         ));
       }
@@ -398,7 +398,9 @@ class _BudgetSetupScreenState extends State<BudgetSetupScreen> {
                                           style: TextStyle(
                                             fontWeight: FontWeight.bold,
                                             fontSize: 15,
-                                            color: AppColors.textPrimary,
+                                            color: draft.categoryName.contains('Đã bị xóa')
+                                                ? AppColors.textSecondary
+                                                : AppColors.textPrimary,
                                           ),
                                         ),
                                       ),

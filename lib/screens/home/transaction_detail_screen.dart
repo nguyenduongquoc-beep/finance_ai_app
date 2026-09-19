@@ -61,21 +61,72 @@ class TransactionDetailScreen extends StatelessWidget {
   }
 
   Future<Map<String, dynamic>> _loadDetails() async {
-    final walletDoc = await FirebaseFirestore.instance.collection('wallets').doc(transaction.walletId).get();
-    final categoryDoc = await FirebaseFirestore.instance.collection('categories').doc(transaction.categoryId).get();
+    final hasWallet = transaction.walletId.isNotEmpty;
+    final hasCategory = transaction.categoryId.isNotEmpty;
+    final isTransfer = transaction.type == 'transfer' &&
+        transaction.toWalletId != null &&
+        transaction.toWalletId!.isNotEmpty;
+    final isGoalTx = (transaction.type == 'goal_deposit' || transaction.type == 'goal_withdraw') &&
+        transaction.goalId != null &&
+        transaction.goalId!.isNotEmpty;
 
-    String? toWalletName;
-    if (transaction.type == 'transfer' && transaction.toWalletId != null && transaction.toWalletId!.isNotEmpty) {
-      final toWalletDoc = await FirebaseFirestore.instance.collection('wallets').doc(transaction.toWalletId).get();
-      toWalletName = toWalletDoc.exists ? (toWalletDoc.data()?['walletName'] ?? 'Không rõ') : 'Không rõ';
+    DocumentSnapshot? walletDoc;
+    DocumentSnapshot? categoryDoc;
+    DocumentSnapshot? toWalletDoc;
+    DocumentSnapshot? goalDoc;
+
+    try {
+      final results = await Future.wait([
+        hasWallet
+            ? FirebaseFirestore.instance.collection('wallets').doc(transaction.walletId).get()
+            : Future.value(null),
+        hasCategory
+            ? FirebaseFirestore.instance.collection('categories').doc(transaction.categoryId).get()
+            : Future.value(null),
+        isTransfer
+            ? FirebaseFirestore.instance.collection('wallets').doc(transaction.toWalletId!).get()
+            : Future.value(null),
+        isGoalTx
+            ? FirebaseFirestore.instance.collection('savingGoals').doc(transaction.goalId!).get()
+            : Future.value(null),
+      ]);
+
+      walletDoc = results[0];
+      categoryDoc = results[1];
+      toWalletDoc = results[2];
+      goalDoc = results[3];
+    } catch (e) {
+      debugPrint('❌ Error loading transaction details: $e');
+    }
+
+    String? goalName = (goalDoc != null && goalDoc.exists)
+        ? ((goalDoc.data() as Map<String, dynamic>?)?['name'] as String?)
+        : null;
+
+    if ((goalName == null || goalName.isEmpty) && transaction.note != null) {
+      final note = transaction.note!;
+      if (note.contains(': ')) {
+        goalName = note.split(': ').last;
+      }
     }
 
     return {
-      'walletName': walletDoc.exists ? (walletDoc.data()?['walletName'] ?? 'Không rõ') : 'Không rõ',
-      'categoryName': categoryDoc.exists ? (categoryDoc.data()?['name'] ?? 'Không rõ') : 'Không rõ',
-      'categoryColor': categoryDoc.exists ? (categoryDoc.data()?['color'] as int?) : null,
-      'categoryIcon': categoryDoc.exists ? (categoryDoc.data()?['icon'] as String?) : null,
-      'toWalletName': toWalletName,
+      'walletName': (walletDoc != null && walletDoc.exists)
+          ? ((walletDoc.data() as Map<String, dynamic>?)?['walletName'] ?? 'Không rõ')
+          : 'Không rõ',
+      'categoryName': (categoryDoc != null && categoryDoc.exists)
+          ? ((categoryDoc.data() as Map<String, dynamic>?)?['name'] ?? 'Không rõ')
+          : 'Không rõ',
+      'categoryColor': (categoryDoc != null && categoryDoc.exists)
+          ? ((categoryDoc.data() as Map<String, dynamic>?)?['color'] as int?)
+          : null,
+      'categoryIcon': (categoryDoc != null && categoryDoc.exists)
+          ? ((categoryDoc.data() as Map<String, dynamic>?)?['icon'] as String?)
+          : null,
+      'toWalletName': (toWalletDoc != null && toWalletDoc.exists)
+          ? ((toWalletDoc.data() as Map<String, dynamic>?)?['walletName'] ?? 'Không rõ')
+          : null,
+      'goalName': goalName ?? 'Không rõ',
     };
   }
 
@@ -85,7 +136,10 @@ class TransactionDetailScreen extends StatelessWidget {
       valueListenable: ThemeController.mode,
       builder: (context, _, __) {
         final firestoreService = FirestoreService();
-        final isTransfer = transaction.type == 'transfer';
+        final isGoalDeposit = transaction.type == 'goal_deposit';
+        final isGoalWithdraw = transaction.type == 'goal_withdraw';
+        final isGoalTx = isGoalDeposit || isGoalWithdraw;
+        final isTransfer = transaction.type == 'transfer' || isGoalTx;
         final isIncome = transaction.type == 'income';
         final color = isTransfer
             ? AppColors.textSecondary
@@ -112,6 +166,7 @@ class TransactionDetailScreen extends StatelessWidget {
               final categoryName = details['categoryName'] ?? 'Không rõ';
               final categoryIcon = details['categoryIcon'];
               final toWalletName = details['toWalletName'];
+              final goalName = details['goalName'];
 
               return SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
@@ -129,18 +184,24 @@ class TransactionDetailScreen extends StatelessWidget {
                               shape: BoxShape.circle,
                             ),
                             child: Icon(
-                              isTransfer
-                                  ? Icons.swap_horiz
-                                  : getCategoryIcon(categoryIcon, transaction.type),
+                              isGoalTx
+                                  ? Icons.savings_outlined
+                                  : (transaction.type == 'transfer'
+                                      ? Icons.swap_horiz
+                                      : getCategoryIcon(categoryIcon, transaction.type)),
                               color: color,
                               size: 32,
                             ),
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            isTransfer
-                                ? 'Số tiền đã chuyển'
-                                : (isIncome ? 'Số tiền đã thu' : 'Số tiền đã chi'),
+                            isGoalDeposit
+                                ? 'Số tiền đã nạp'
+                                : (isGoalWithdraw
+                                    ? 'Số tiền đã rút'
+                                    : (transaction.type == 'transfer'
+                                        ? 'Số tiền đã chuyển'
+                                        : (isIncome ? 'Số tiền đã thu' : 'Số tiền đã chi'))),
                             style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
                           ),
                           const SizedBox(height: 4),
@@ -158,7 +219,13 @@ class TransactionDetailScreen extends StatelessWidget {
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Text(
-                              isTransfer ? 'Chuyển tiền' : (isIncome ? 'Thu nhập' : 'Chi tiêu'),
+                              isGoalDeposit
+                                  ? 'Nạp tiết kiệm'
+                                  : (isGoalWithdraw
+                                      ? 'Rút tiết kiệm'
+                                      : (transaction.type == 'transfer'
+                                          ? 'Chuyển tiền'
+                                          : (isIncome ? 'Thu nhập' : 'Chi tiêu'))),
                               style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12),
                             ),
                           ),
@@ -179,16 +246,16 @@ class TransactionDetailScreen extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (!isTransfer) ...[
+                        if (isGoalTx) ...[
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
-                                'Danh mục',
+                                'Ví',
                                 style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
                               ),
                               Text(
-                                categoryName,
+                                walletName,
                                 style: TextStyle(
                                   color: AppColors.textPrimary,
                                   fontSize: 14,
@@ -198,8 +265,25 @@ class TransactionDetailScreen extends StatelessWidget {
                             ],
                           ),
                           const Divider(height: 24, thickness: 0.5),
-                        ],
-                        if (isTransfer) ...[
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Mục tiêu tiết kiệm',
+                                style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                              ),
+                              Text(
+                                goalName ?? 'Không rõ',
+                                style: TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Divider(height: 24, thickness: 0.5),
+                        ] else if (transaction.type == 'transfer') ...[
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
@@ -237,6 +321,24 @@ class TransactionDetailScreen extends StatelessWidget {
                           ),
                           const Divider(height: 24, thickness: 0.5),
                         ] else ...[
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Danh mục',
+                                style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                              ),
+                              Text(
+                                categoryName,
+                                style: TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Divider(height: 24, thickness: 0.5),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
@@ -373,7 +475,11 @@ class TransactionDetailScreen extends StatelessWidget {
                       context: context,
                       builder: (ctx) => AlertDialog(
                         title: const Text('Xóa giao dịch?'),
-                        content: const Text('Hành động này không thể hoàn tác.'),
+                        content: Text(
+                          isGoalTx
+                              ? 'Xóa giao dịch này sẽ hoàn tác cả số dư ví lẫn tiến độ mục tiêu tiết kiệm liên quan.'
+                              : 'Hành động này không thể hoàn tác.',
+                        ),
                         actions: [
                           TextButton(
                             onPressed: () => Navigator.pop(ctx, false),
@@ -397,35 +503,37 @@ class TransactionDetailScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    elevation: 0,
-                  ),
-                  onPressed: () async {
-                    final result = await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => AddTransactionScreen(transactionToEdit: transaction),
-                      ),
-                    );
-                    if (result == true) {
-                      if (context.mounted) {
-                        Navigator.of(context).pop(); // Quay lại màn hình danh sách sau khi sửa thành công
+              if (!isGoalTx) ...[
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
+                    ),
+                    onPressed: () async {
+                      final result = await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AddTransactionScreen(transactionToEdit: transaction),
+                        ),
+                      );
+                      if (result == true) {
+                        if (context.mounted) {
+                          Navigator.of(context).pop();
+                        }
                       }
-                    }
-                  },
-                  child: const Text(
-                    'Sửa',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    },
+                    child: const Text(
+                      'Sửa',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
         ),

@@ -15,6 +15,12 @@
 - [x] Sửa lỗi mất số dư khi "Chuyển & Xóa" ví (Ticket 028 — reassignAndDeleteWallet cộng balance cũ sang ví mới & cập nhật toWalletId)
 - [x] Sửa lỗi Ví thanh toán & Danh mục bị xóa trắng khi mở màn Sửa giao dịch (Ticket 028 — kiểm tra snap.hasData trước khi reset _selectedWalletId/_selectedCategoryId trong StreamBuilder)
 - [x] Tối ưu hiệu năng Stream ở Dashboard & Danh sách giao dịch (Ticket 030 — cache Stream trong state fields, tránh khởi tạo lại listener Firestore khi rebuild UI/gõ ô tìm kiếm/bấm cột biểu đồ)
+- [x] Fix cảnh báo gần hạn mức, AI Chat hiển thị tên danh mục, và lớp phòng vệ cho ngân sách mồ côi (Ticket 032)
+- [x] Sửa lỗi nạp tiền mục tiêu tiết kiệm chưa trừ tiền thật từ ví (Ticket 034 — thêm bước chọn ví, validate số dư ví, và trừ số dư ví tương ứng khi nạp tiền)
+- [x] Tối ưu tốc độ tải: song song hóa (Future.wait) các lượt đọc Firestore tuần tự độc lập ở Transaction Detail, AI Insight, AI Report và AI Chat (Ticket 036)
+- [x] Khắc phục trải nghiệm khi mạng chập chờn: fail-fast ngay khi mất mạng khi gọi AI/OCR thay vì chờ hết toàn bộ chuỗi model dự phòng (Ticket 035)
+- [x] Bổ sung chức năng Rút tiền từ mục tiêu tiết kiệm hoàn thiện mô hình Giữ tiền hộ + sửa lỗi giao diện dropdown chọn ví bị tràn chữ (Ticket 037)
+- [x] Nâng cấp Nạp/Rút tiền mục tiêu tiết kiệm thành giao dịch có lịch sử đầy đủ trong Lịch sử giao dịch (goal_deposit / goal_withdraw), xử lý atomic trong Firestore transaction (Ticket 038)
 
 ## Đang làm / Cần làm tiếp
 

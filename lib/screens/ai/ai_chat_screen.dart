@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../../models/transaction_model.dart';
+import '../../models/wallet_model.dart';
+import '../../models/budget_model.dart';
+import '../../models/category_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/ai_service.dart';
 import '../../services/theme_controller.dart';
@@ -66,11 +70,17 @@ class _AiChatScreenState extends State<AiChatScreen> {
     final now = DateTime.now();
     final monthStart = DateTime(now.year, now.month, 1);
 
-    final transactions =
-        await _firestoreService.streamTransactions(uid, from: monthStart).first;
-    final wallets = await _firestoreService.streamWallets(uid).first;
-    final budgets =
-        await _firestoreService.streamBudgets(uid, month: AppFormatters.month(now)).first;
+    final results = await Future.wait<dynamic>([
+      _firestoreService.streamTransactions(uid, from: monthStart).first,
+      _firestoreService.streamWallets(uid).first,
+      _firestoreService.streamBudgets(uid, month: AppFormatters.month(now)).first,
+      _firestoreService.streamCategories(uid).first,
+    ]);
+
+    final transactions = results[0] as List<AppTransaction>;
+    final wallets = results[1] as List<Wallet>;
+    final budgets = results[2] as List<Budget>;
+    final categories = results[3] as List<Category>;
 
     final income = transactions.where((t) => t.type == 'income').fold<double>(0, (a, t) => a + t.amount);
     final expense = transactions.where((t) => t.type == 'expense').fold<double>(0, (a, t) => a + t.amount);
@@ -90,7 +100,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
       for (final b in budgets) {
         final spent = spentByCategory[b.categoryId] ?? 0;
         final percent = b.limit > 0 ? (spent / b.limit * 100).round() : 0;
-        buffer.writeln('- Danh mục ${b.categoryId}: đã chi ${AppFormatters.number(spent)}/${AppFormatters.number(b.limit)} đ ($percent%)');
+        final categoryName = categories
+            .where((c) => c.categoryId == b.categoryId)
+            .firstOrNull
+            ?.name ?? 'Danh mục';
+        buffer.writeln('- $categoryName: đã chi ${AppFormatters.number(spent)}/${AppFormatters.number(b.limit)} đ ($percent%)');
       }
     }
     return buffer.toString();
@@ -121,9 +135,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
       debugPrint('AI Chat error: $e');
       debugPrintStack(stackTrace: stackTrace);
       if (mounted) {
-        setState(() => _messages.add(
-              _ChatMessage('Xin lỗi, đã có lỗi xảy ra. Vui lòng thử lại sau.', false),
-            ));
+        final msg = AiService.isNoNetworkException(e)
+            ? 'Không có kết nối mạng. Vui lòng kiểm tra Internet và thử lại.'
+            : 'Xin lỗi, đã có lỗi xảy ra. Vui lòng thử lại sau.';
+        setState(() => _messages.add(_ChatMessage(msg, false)));
+        _scrollToBottom();
       }
     } finally {
       if (mounted) setState(() => _isSending = false);

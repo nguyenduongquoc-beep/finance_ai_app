@@ -213,6 +213,14 @@ class FirestoreService {
       toWalletRef = _db.collection('wallets').doc(tx.toWalletId);
     }
 
+    DocumentReference? goalRef;
+    if (tx.type == 'goal_deposit' || tx.type == 'goal_withdraw') {
+      if (tx.goalId == null || tx.goalId!.isEmpty) {
+        throw Exception('Giao dịch mục tiêu tiết kiệm cần chỉ định mục tiêu');
+      }
+      goalRef = _db.collection('savingGoals').doc(tx.goalId);
+    }
+
     DocumentReference? budgetRef;
     final monthStr = DateFormat('MM/yyyy').format(tx.date);
     if (tx.type == 'expense') {
@@ -233,6 +241,11 @@ class FirestoreService {
         final toWalletSnap = await transaction.get(toWalletRef);
         if (!toWalletSnap.exists) throw Exception('Ví đích không tồn tại');
       }
+      DocumentSnapshot? goalSnap;
+      if (goalRef != null) {
+        goalSnap = await transaction.get(goalRef);
+        if (!goalSnap.exists) throw Exception('Mục tiêu tiết kiệm không tồn tại');
+      }
       transaction.set(txRef, tx.toMap());
 
       switch (tx.type) {
@@ -245,6 +258,31 @@ class FirestoreService {
         case 'transfer':
           transaction.update(walletRef, {'balance': FieldValue.increment(-tx.amount)});
           transaction.update(toWalletRef!, {'balance': FieldValue.increment(tx.amount)});
+          break;
+        case 'goal_deposit':
+          final goalData = goalSnap!.data() as Map<String, dynamic>;
+          final currentSaved = (goalData['savedAmount'] as num? ?? 0).toDouble();
+          final targetAmount = (goalData['targetAmount'] as num? ?? 0).toDouble();
+          final walletData = walletSnap.data() as Map<String, dynamic>;
+          final currentBalance = (walletData['balance'] as num? ?? 0).toDouble();
+          if (tx.amount > currentBalance) {
+            throw Exception('Số dư ví không đủ để nạp vào mục tiêu');
+          }
+          transaction.update(walletRef, {'balance': FieldValue.increment(-tx.amount)});
+          transaction.update(goalRef!, {
+            'savedAmount': (currentSaved + tx.amount).clamp(0, targetAmount),
+          });
+          break;
+        case 'goal_withdraw':
+          final goalDataW = goalSnap!.data() as Map<String, dynamic>;
+          final currentSavedW = (goalDataW['savedAmount'] as num? ?? 0).toDouble();
+          if (tx.amount > currentSavedW) {
+            throw Exception('Số tiền rút vượt quá số tiền đã tiết kiệm trong mục tiêu');
+          }
+          transaction.update(walletRef, {'balance': FieldValue.increment(tx.amount)});
+          transaction.update(goalRef!, {
+            'savedAmount': currentSavedW - tx.amount,
+          });
           break;
       }
     });
@@ -401,6 +439,31 @@ class FirestoreService {
         await adjustWalletBalance(tx.walletId, tx.amount);
         if (tx.toWalletId != null && tx.toWalletId!.isNotEmpty) {
           await adjustWalletBalance(tx.toWalletId!, -tx.amount);
+        }
+        break;
+      case 'goal_deposit':
+        await adjustWalletBalance(tx.walletId, tx.amount);
+        if (tx.goalId != null) {
+          final goalDoc = await _db.collection('savingGoals').doc(tx.goalId).get();
+          if (goalDoc.exists) {
+            final saved = (goalDoc.data()!['savedAmount'] as num? ?? 0).toDouble();
+            await _db.collection('savingGoals').doc(tx.goalId).update({
+              'savedAmount': (saved - tx.amount).clamp(0, double.infinity),
+            });
+          }
+        }
+        break;
+      case 'goal_withdraw':
+        await adjustWalletBalance(tx.walletId, -tx.amount);
+        if (tx.goalId != null) {
+          final goalDoc = await _db.collection('savingGoals').doc(tx.goalId).get();
+          if (goalDoc.exists) {
+            final saved = (goalDoc.data()!['savedAmount'] as num? ?? 0).toDouble();
+            final target = (goalDoc.data()!['targetAmount'] as num? ?? 0).toDouble();
+            await _db.collection('savingGoals').doc(tx.goalId).update({
+              'savedAmount': (saved + tx.amount).clamp(0, target),
+            });
+          }
         }
         break;
     }

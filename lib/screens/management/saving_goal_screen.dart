@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:percent_indicator/percent_indicator.dart';
 import '../../models/saving_goal_model.dart';
+import '../../models/transaction_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/ai_service.dart';
 import '../../services/theme_controller.dart';
 import '../../utils/constants.dart';
 import '../../utils/formatters.dart';
+import '../../widgets/app_snackbar.dart';
 import '../../widgets/stream_error_widget.dart';
 
 /// 16. Mục tiêu tiết kiệm - vd: Laptop 25 triệu, đã tiết kiệm 8 triệu (32%)
@@ -41,19 +43,60 @@ class SavingGoalScreen extends StatelessWidget {
           if (goals.isEmpty) {
             return _buildEmptyState(context, firestoreService, uid);
           }
-          return ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-            itemCount: goals.length,
-            itemBuilder: (context, i) => _GoalCard(
-              goal: goals[i],
-              firestoreService: firestoreService,
-            ),
+          return Column(
+            children: [
+              _buildTotalSavedCard(goals),
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+                  itemCount: goals.length,
+                  itemBuilder: (context, i) => _GoalCard(
+                    goal: goals[i],
+                    firestoreService: firestoreService,
+                  ),
+                ),
+              ),
+            ],
           );
         },
       ),
     );
   },
 );
+  }
+
+  Widget _buildTotalSavedCard(List<SavingGoal> goals) {
+    final totalSaved = goals.fold<double>(0, (a, g) => a + g.savedAmount);
+    if (totalSaved <= 0) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.aiAccent.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.aiAccent.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.savings_rounded, color: AppColors.aiAccent),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Tổng đang tiết kiệm',
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                Text(AppFormatters.currency(totalSaved),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                        color: AppColors.aiAccent)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildEmptyState(
@@ -200,48 +243,225 @@ class _GoalCardState extends State<_GoalCard> {
         _isLoadingPlan = false;
         _planExpanded = true;
       });
-    } catch (_) {
+    } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoadingPlan = false);
+      final msg = AiService.isNoNetworkException(e)
+          ? 'Không có kết nối mạng. Vui lòng thử lại.'
+          : 'Không thể tải kế hoạch AI lúc này.';
+      AppSnackbar.show(context, msg, isError: true);
     }
   }
 
   Future<void> _addDeposit() async {
     final amountController = TextEditingController();
+    String? selectedWalletId;
+
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final wallets = await widget.firestoreService.streamWallets(uid).first;
+    final activeWallets = wallets.where((w) => w.isActive).toList();
+
+    if (activeWallets.isEmpty) {
+      if (mounted) {
+        AppSnackbar.show(context, 'Bạn chưa có ví nào để nạp tiền. Vui lòng tạo ví trước.', isError: true);
+      }
+      return;
+    }
+
+    selectedWalletId = activeWallets.first.walletId;
+
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('Nạp tiền vào "${widget.goal.name}"'),
-        content: TextField(
-          controller: amountController,
-          keyboardType: TextInputType.number,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Số tiền nạp (đ)',
-            prefixIcon: Icon(Icons.add_circle_outline),
-            border: OutlineInputBorder(),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text('Nạp tiền vào "${widget.goal.name}"'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: selectedWalletId,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Nạp từ ví',
+                  prefixIcon: Icon(Icons.account_balance_wallet_outlined),
+                ),
+                items: activeWallets
+                    .map((w) => DropdownMenuItem(
+                          value: w.walletId,
+                          child: Text(
+                            '${w.walletName} (${AppFormatters.currency(w.balance)})',
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        ))
+                    .toList(),
+                onChanged: (v) => setDialogState(() => selectedWalletId = v),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: amountController,
+                keyboardType: TextInputType.number,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Số tiền nạp (đ)',
+                  prefixIcon: Icon(Icons.add_circle_outline),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
           ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Nạp'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Nạp'),
-          ),
-        ],
       ),
     );
-    if (confirmed == true) {
-      final deposit = AppFormatters.parseCurrencyInput(amountController.text);
-      if (deposit > 0) {
-        final newSaved =
-            (widget.goal.savedAmount + deposit).clamp(0, widget.goal.targetAmount);
-        await widget.firestoreService.updateSavingGoal(
-          widget.goal.goalId,
-          {'savedAmount': newSaved},
-        );
+
+    if (confirmed != true) return;
+
+    final deposit = AppFormatters.parseCurrencyInput(amountController.text);
+    if (deposit <= 0 || selectedWalletId == null) {
+      if (mounted) {
+        AppSnackbar.show(context, 'Vui lòng nhập số tiền hợp lệ', isError: true);
+      }
+      return;
+    }
+
+    try {
+      final tx = AppTransaction(
+        transactionId: '',
+        userId: uid,
+        walletId: selectedWalletId!,
+        categoryId: '',
+        amount: deposit,
+        type: 'goal_deposit',
+        goalId: widget.goal.goalId,
+        note: 'Nạp vào mục tiêu tiết kiệm: ${widget.goal.name}',
+        date: DateTime.now(),
+      );
+      await widget.firestoreService.createTransaction(tx);
+      if (mounted) {
+        AppSnackbar.show(context, 'Đã nạp ${AppFormatters.currency(deposit)} vào mục tiêu');
+      }
+    } catch (e) {
+      debugPrint('❌ Lỗi khi nạp tiền mục tiêu tiết kiệm: $e');
+      if (mounted) {
+        AppSnackbar.show(context, 'Không thể nạp tiền. Vui lòng thử lại.', isError: true);
+      }
+    }
+  }
+
+  Future<void> _withdrawFromGoal() async {
+    final amountController = TextEditingController();
+    String? selectedWalletId;
+
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final wallets = await widget.firestoreService.streamWallets(uid).first;
+    final activeWallets = wallets.where((w) => w.isActive).toList();
+
+    if (activeWallets.isEmpty) {
+      if (mounted) {
+        AppSnackbar.show(context, 'Bạn chưa có ví nào để nhận lại tiền. Vui lòng tạo ví trước.', isError: true);
+      }
+      return;
+    }
+
+    selectedWalletId = activeWallets.first.walletId;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text('Rút tiền từ "${widget.goal.name}"'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Đang có ${AppFormatters.currency(widget.goal.savedAmount)} trong mục tiêu này.',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: selectedWalletId,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Nhận về ví',
+                  prefixIcon: Icon(Icons.account_balance_wallet_outlined),
+                ),
+                items: activeWallets
+                    .map((w) => DropdownMenuItem(
+                          value: w.walletId,
+                          child: Text(
+                            '${w.walletName} (${AppFormatters.currency(w.balance)})',
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        ))
+                    .toList(),
+                onChanged: (v) => setDialogState(() => selectedWalletId = v),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: amountController,
+                keyboardType: TextInputType.number,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Số tiền rút (đ)',
+                  prefixIcon: Icon(Icons.remove_circle_outline),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.expense),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Rút'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final withdrawAmount = AppFormatters.parseCurrencyInput(amountController.text);
+    if (withdrawAmount <= 0 || selectedWalletId == null) {
+      if (mounted) {
+        AppSnackbar.show(context, 'Vui lòng nhập số tiền hợp lệ', isError: true);
+      }
+      return;
+    }
+
+    try {
+      final tx = AppTransaction(
+        transactionId: '',
+        userId: uid,
+        walletId: selectedWalletId!,
+        categoryId: '',
+        amount: withdrawAmount,
+        type: 'goal_withdraw',
+        goalId: widget.goal.goalId,
+        note: 'Rút từ mục tiêu tiết kiệm: ${widget.goal.name}',
+        date: DateTime.now(),
+      );
+      await widget.firestoreService.createTransaction(tx);
+      if (mounted) {
+        AppSnackbar.show(context, 'Đã rút ${AppFormatters.currency(withdrawAmount)} về ví');
+      }
+    } catch (e) {
+      debugPrint('❌ Lỗi khi rút tiền mục tiêu tiết kiệm: $e');
+      if (mounted) {
+        AppSnackbar.show(context, 'Không thể rút tiền. Vui lòng thử lại.', isError: true);
       }
     }
   }
@@ -352,6 +572,23 @@ class _GoalCardState extends State<_GoalCard> {
                 ),
               ],
             ),
+            if (goal.savedAmount > 0) ...[
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _withdrawFromGoal,
+                  icon: const Icon(Icons.undo_rounded, size: 14),
+                  label: const Text('Rút tiền về ví', style: TextStyle(fontSize: 12)),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.textSecondary,
+                    padding: const EdgeInsets.symmetric(horizontal: 0),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ),
+            ],
             if (!_isCompleted) ...[
               const SizedBox(height: 6),
               Text(

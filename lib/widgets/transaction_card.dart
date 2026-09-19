@@ -47,13 +47,21 @@ class TransactionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isTransfer = transaction.type == 'transfer';
+    final isGoalDeposit = transaction.type == 'goal_deposit';
+    final isGoalWithdraw = transaction.type == 'goal_withdraw';
+    final isTransfer = transaction.type == 'transfer' || isGoalDeposit || isGoalWithdraw;
     final isIncome = transaction.type == 'income';
     final color = isTransfer
         ? AppColors.textSecondary
         : (isIncome ? AppColors.income : AppColors.expense);
     final hasNote = transaction.note != null && transaction.note!.trim().isNotEmpty;
-    final categoryLabel = isTransfer ? 'Chuyển tiền' : (category?.name ?? 'Không rõ danh mục');
+    final categoryLabel = isGoalDeposit
+        ? 'Nạp mục tiêu tiết kiệm'
+        : isGoalWithdraw
+            ? 'Rút mục tiêu tiết kiệm'
+            : isTransfer
+                ? 'Chuyển tiền'
+                : (category?.name ?? 'Không rõ danh mục');
     final titleText = hasNote ? transaction.note! : categoryLabel;
     final subtitleText = hasNote ? categoryLabel : null;
 
@@ -78,7 +86,9 @@ class TransactionCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
           ),
           child: Icon(
-            isTransfer ? Icons.swap_horiz : _getCategoryIcon(category?.icon),
+            (isGoalDeposit || isGoalWithdraw)
+                ? Icons.savings_outlined
+                : (isTransfer ? Icons.swap_horiz : _getCategoryIcon(category?.icon)),
             color: isTransfer ? AppColors.textSecondary : AppColors.primary,
             size: 22,
           ),

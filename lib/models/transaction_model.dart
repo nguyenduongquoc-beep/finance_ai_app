@@ -10,6 +10,7 @@ class AppTransaction {
   final double amount;
   final String type; // income | expense | transfer
   final String? toWalletId; // Chỉ có giá trị khi type == 'transfer' (VÍ ĐÍCH)
+  final String? goalId; // MỚI — chỉ dùng khi type == 'goal_deposit' hoặc 'goal_withdraw'
   final String? note;
   final String? image; // Path/URL ảnh hóa đơn
   final String? location;
@@ -23,6 +24,7 @@ class AppTransaction {
     required this.amount,
     required this.type,
     this.toWalletId,
+    this.goalId,
     this.note,
     this.image,
     this.location,
@@ -38,6 +40,7 @@ class AppTransaction {
       amount: (map['amount'] ?? 0).toDouble(),
       type: map['type'] ?? 'expense',
       toWalletId: map['toWalletId'],
+      goalId: map['goalId'],
       note: map['note'],
       image: map['image'],
       location: map['location'],
@@ -53,6 +56,7 @@ class AppTransaction {
       'amount': amount,
       'type': type,
       'toWalletId': toWalletId,
+      'goalId': goalId,
       'note': note,
       'image': image,
       'location': location,

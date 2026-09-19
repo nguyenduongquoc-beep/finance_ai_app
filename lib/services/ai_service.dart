@@ -40,6 +40,27 @@ class AiService {
     }
   }
 
+  /// Nhận diện lỗi do MẤT MẠNG (khác với lỗi riêng của 1 model AI).
+  /// Khi gặp lỗi loại này, thử tiếp các model dự phòng khác là vô nghĩa
+  /// (vì tất cả đều cần mạng để gọi API) — nên phải dừng ngay, không lãng
+  /// phí thời gian chờ của người dùng.
+  bool _isNetworkError(Object e) {
+    if (e is SocketException) return true;
+    final msg = e.toString().toLowerCase();
+    return msg.contains('failed host lookup') ||
+        msg.contains('no address associated') ||
+        msg.contains('network is unreachable') ||
+        msg.contains('connection refused') ||
+        msg.contains('connection reset') ||
+        msg.contains('software caused connection abort');
+  }
+
+  /// Kiểm tra 1 exception có phải là lỗi "mất mạng" do _generateWithFallback
+  /// ném ra hay không — dùng ở tầng UI để hiển thị đúng thông báo.
+  static bool isNoNetworkException(Object e) {
+    return e.toString().contains('NO_NETWORK');
+  }
+
   // Hàm helper gọi generateContent có tự động thử model dự phòng khi gặp lỗi "not found"
   Future<GenerateContentResponse> _generateWithFallback(List<Content> content) async {
     Exception? lastError;
@@ -51,6 +72,10 @@ class AiService {
             .timeout(const Duration(seconds: 15));
         return response;
       } catch (e) {
+        if (_isNetworkError(e)) {
+          debugPrint('⚠️ Phát hiện lỗi mất mạng khi gọi model "$modelName" — dừng ngay, không thử model dự phòng khác: $e');
+          throw Exception('NO_NETWORK');
+        }
         lastError = e is Exception ? e : Exception(e.toString());
         debugPrint('⚠️ Model "$modelName" thất bại: $e — thử model dự phòng tiếp theo...');
         continue;
@@ -238,6 +263,9 @@ Chỉ trả về kết quả dưới dạng JSON có các trường: merchant, t
       return ReceiptInfo.fromJson(data);
     } catch (e) {
       debugPrint('OCR Receipt extraction error: $e');
+      if (_isNetworkError(e) || isNoNetworkException(e)) {
+        rethrow;
+      }
       return null;
     }
   }

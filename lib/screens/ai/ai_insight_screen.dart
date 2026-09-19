@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../models/financial_issue.dart';
 import '../../models/transaction_model.dart';
 import '../../models/category_model.dart';
+import '../../models/user_model.dart';
 import '../../models/trend_result.dart';
 import '../../services/firestore_service.dart';
 import '../../services/ai_service.dart';
@@ -12,6 +13,7 @@ import '../../utils/constants.dart';
 import '../../utils/formatters.dart';
 import '../../widgets/weekly_heatmap_card.dart';
 import '../../widgets/trend_chart_card.dart';
+import '../../widgets/app_snackbar.dart';
 
 /// 18. AI Insight — Phân tích có căn cứ + AI giải thích theo yêu cầu
 class AiInsightScreen extends StatefulWidget {
@@ -80,22 +82,26 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
     final now = DateTime.now();
     final monthStart = DateTime(now.year, now.month, 1);
     final last30Days = now.subtract(const Duration(days: 30));
-
     final lastMonthStart = DateTime(now.year, now.month - 1, 1);
     final lastMonthEnd = DateTime(now.year, now.month, 0, 23, 59, 59);
+    final sixMonthsAgo = DateTime(now.year, now.month - 5, 1);
 
     try {
-      final transactions =
-          await _firestoreService.streamTransactions(uid, from: last30Days).first;
-      final categories = await _firestoreService.streamCategories(uid).first;
-      final monthTransactions =
-          await _firestoreService.streamTransactions(uid, from: monthStart).first;
+      final results = await Future.wait<dynamic>([
+        _firestoreService.streamTransactions(uid, from: last30Days).first,
+        _firestoreService.streamCategories(uid).first,
+        _firestoreService.streamTransactions(uid, from: monthStart).first,
+        _firestoreService.streamTransactions(uid, from: lastMonthStart, to: lastMonthEnd).first,
+        _firestoreService.getUserProfile(uid),
+        _firestoreService.streamTransactions(uid, from: sixMonthsAgo).first,
+      ]);
 
-      final lastMonthTransactions = await _firestoreService
-          .streamTransactions(uid, from: lastMonthStart, to: lastMonthEnd)
-          .first;
-
-      final userProfile = await _firestoreService.getUserProfile(uid);
+      final transactions = results[0] as List<AppTransaction>;
+      final categories = results[1] as List<Category>;
+      final monthTransactions = results[2] as List<AppTransaction>;
+      final lastMonthTransactions = results[3] as List<AppTransaction>;
+      final userProfile = results[4] as AppUser?;
+      final trendTransactions = results[5] as List<AppTransaction>;
       final monthlyIncome = userProfile?.monthlyIncome ?? 0;
 
       // --- Financial Analytics Layer (Dart thuần, KHÔNG gọi AI) ---
@@ -127,9 +133,6 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
       }).toList();
 
       // Dữ liệu 6 tháng chuẩn bị cho Trend chart
-      final sixMonthsAgo = DateTime(now.year, now.month - 5, 1);
-      final trendTransactions =
-          await _firestoreService.streamTransactions(uid, from: sixMonthsAgo).first;
       final List<double> monthlySpending = [];
       for (int i = 5; i >= 0; i--) {
         final month = DateTime(now.year, now.month - i, 1);
@@ -177,8 +180,11 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
       });
     } catch (e) {
       if (!mounted) return;
+      final msg = AiService.isNoNetworkException(e)
+          ? 'Không có kết nối mạng.'
+          : 'Không thể tải đề xuất từ AI lúc này.';
       setState(() {
-        _aiExplanations[key] = 'Không thể tải đề xuất từ AI lúc này.';
+        _aiExplanations[key] = msg;
         _aiLoadingMap[key] = false;
       });
     }
@@ -201,8 +207,11 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
       });
     } catch (e) {
       if (!mounted) return;
+      final msg = AiService.isNoNetworkException(e)
+          ? 'Không có kết nối mạng.'
+          : 'Không thể tải đề xuất từ AI lúc này.';
       setState(() {
-        _aiExplanations[key] = 'Không thể tải đề xuất từ AI lúc này.';
+        _aiExplanations[key] = msg;
         _aiLoadingMap[key] = false;
       });
     }
@@ -224,6 +233,9 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
       });
     } catch (e) {
       if (!mounted) return;
+      if (AiService.isNoNetworkException(e)) {
+        AppSnackbar.show(context, 'Không có kết nối mạng. Vui lòng thử lại.', isError: true);
+      }
       setState(() {
         _isLoadingTrend = false;
       });
@@ -259,12 +271,22 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
         _aiService.analyzeSpendingHabits(
           transactions: transactions,
           categories: categories,
-        ).then((res) => analysis = res).catchError((_) => analysis),
+        ).then((res) => analysis = res).catchError((err) {
+          analysis = AiService.isNoNetworkException(err)
+              ? 'Không có kết nối mạng.'
+              : 'Không thể tải phân tích chi tiêu lúc này.';
+          return analysis;
+        }),
         _aiService.predictMonthEnd(
           spentSoFar: spentSoFar,
           dayOfMonth: now.day,
           totalDaysInMonth: daysInMonth,
-        ).then((res) => prediction = res).catchError((_) => prediction),
+        ).then((res) => prediction = res).catchError((err) {
+          prediction = AiService.isNoNetworkException(err)
+              ? 'Không có kết nối mạng.'
+              : 'Không thể tải dự đoán chi tiêu lúc này.';
+          return prediction;
+        }),
       ]);
 
       if (!mounted) return;

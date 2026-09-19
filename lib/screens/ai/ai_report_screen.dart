@@ -89,23 +89,21 @@ class _AiReportScreenState extends State<AiReportScreen> {
     final twoMonthsAgoEnd = DateTime(now.year, now.month - 1, 0, 23, 59, 59);
 
     try {
-      final List<AppTransaction> currentTx = await _firestoreService
-          .streamTransactions(uid, from: monthStart)
-          .first;
+      final results = await Future.wait<dynamic>([
+        _firestoreService.streamTransactions(uid, from: monthStart).first,
+        _firestoreService.streamTransactions(uid, from: lastMonthStart, to: lastMonthEnd).first,
+        _firestoreService.streamTransactions(uid, from: twoMonthsAgoStart, to: twoMonthsAgoEnd).first,
+        _firestoreService.streamCategories(uid).first,
+        _firestoreService.streamBudgets(uid, month: AppFormatters.month(now)).first,
+        _firestoreService.streamSavingGoals(uid).first,
+      ]);
 
-      final List<AppTransaction> lastMonthTx = await _firestoreService
-          .streamTransactions(uid, from: lastMonthStart, to: lastMonthEnd)
-          .first;
-
-      final List<AppTransaction> twoMonthsAgoTx = await _firestoreService
-          .streamTransactions(uid, from: twoMonthsAgoStart, to: twoMonthsAgoEnd)
-          .first;
-
-      final categories = await _firestoreService.streamCategories(uid).first;
-      final budgets = await _firestoreService
-          .streamBudgets(uid, month: AppFormatters.month(now))
-          .first;
-      final savingGoals = await _firestoreService.streamSavingGoals(uid).first;
+      final List<AppTransaction> currentTx = results[0] as List<AppTransaction>;
+      final List<AppTransaction> lastMonthTx = results[1] as List<AppTransaction>;
+      final List<AppTransaction> twoMonthsAgoTx = results[2] as List<AppTransaction>;
+      final categories = results[3] as List<Category>;
+      final budgets = results[4] as List<Budget>;
+      final savingGoals = results[5] as List<SavingGoal>;
 
       // 1. Tính tổng thu/chi tháng này
       double totalExp = 0;

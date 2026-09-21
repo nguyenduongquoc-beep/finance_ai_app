@@ -10,6 +10,7 @@ import '../models/financial_issue.dart';
 import '../models/trend_result.dart';
 import '../models/transaction_model.dart';
 import '../models/category_model.dart';
+import '../models/financial_forecast_result.dart';
 import '../config/api_keys.dart';
 
 /// ============================================================
@@ -25,10 +26,10 @@ import '../config/api_keys.dart';
 class AiService {
   // Danh sách model dự phòng, thử lần lượt nếu model chính bị lỗi 404/not found
   static const List<String> _modelFallbackChain = [
-    'gemini-3.5-flash',       // model chính, đã xác nhận hoạt động qua Bước 1
-    'gemini-3.5-flash-lite',  // dự phòng 1
-    'gemini-3.6-flash',       // dự phòng 2
-    'gemini-flash-latest',    // dự phòng 3
+    'gemini-3.5-flash', // model chính, đã xác nhận hoạt động qua Bước 1
+    'gemini-3.5-flash-lite', // dự phòng 1
+    'gemini-3.6-flash', // dự phòng 2
+    'gemini-flash-latest', // dự phòng 3
   ];
 
   final List<Content> _chatHistory = [];
@@ -36,7 +37,8 @@ class AiService {
   AiService() {
     debugPrint('🔧 Model fallback chain: $_modelFallbackChain');
     if (geminiApiKey.isEmpty || geminiApiKey == 'YOUR_GEMINI_API_KEY_HERE') {
-      throw Exception('Gemini API key chưa được cấu hình trong config/api_keys.dart');
+      throw Exception(
+          'Gemini API key chưa được cấu hình trong config/api_keys.dart');
     }
   }
 
@@ -62,22 +64,26 @@ class AiService {
   }
 
   // Hàm helper gọi generateContent có tự động thử model dự phòng khi gặp lỗi "not found"
-  Future<GenerateContentResponse> _generateWithFallback(List<Content> content) async {
+  Future<GenerateContentResponse> _generateWithFallback(
+      List<Content> content) async {
     Exception? lastError;
     for (final modelName in _modelFallbackChain) {
       try {
         debugPrint('🚀 Đang gọi Gemini với model: $modelName');
         final model = GenerativeModel(model: modelName, apiKey: geminiApiKey);
-        final response = await model.generateContent(content)
+        final response = await model
+            .generateContent(content)
             .timeout(const Duration(seconds: 15));
         return response;
       } catch (e) {
         if (_isNetworkError(e)) {
-          debugPrint('⚠️ Phát hiện lỗi mất mạng khi gọi model "$modelName" — dừng ngay, không thử model dự phòng khác: $e');
+          debugPrint(
+              '⚠️ Phát hiện lỗi mất mạng khi gọi model "$modelName" — dừng ngay, không thử model dự phòng khác: $e');
           throw Exception('NO_NETWORK');
         }
         lastError = e is Exception ? e : Exception(e.toString());
-        debugPrint('⚠️ Model "$modelName" thất bại: $e — thử model dự phòng tiếp theo...');
+        debugPrint(
+            '⚠️ Model "$modelName" thất bại: $e — thử model dự phòng tiếp theo...');
         continue;
       }
     }
@@ -117,7 +123,8 @@ tổng chi tiêu cuối tháng sẽ khoảng $predicted đồng. Hãy viết m�
 gọn bằng tiếng Việt cho người dùng về dự đoán này.
 ''';
     final response = await _generateWithFallback([Content.text(prompt)]);
-    return response.text ?? 'Theo tốc độ hiện tại, dự kiến chi tiêu cuối tháng khoảng ${predicted.round()} đồng.';
+    return response.text ??
+        'Theo tốc độ hiện tại, dự kiến chi tiêu cuối tháng khoảng ${predicted.round()} đồng.';
   }
 
   /// AI 4: Lập kế hoạch tiết kiệm
@@ -141,7 +148,8 @@ $months tháng. Số tiền cần tiết kiệm là khoảng $monthlyRequired đ
   /// AI 5: Chatbot tài chính - trả lời câu hỏi dựa trên dữ liệu Firestore
   Future<String> chatWithFinancialData({
     required String userQuestion,
-    required String contextData, // dữ liệu tổng hợp từ Firestore (thu/chi/ví/ngân sách)
+    required String
+        contextData, // dữ liệu tổng hợp từ Firestore (thu/chi/ví/ngân sách)
   }) async {
     if (_chatHistory.isEmpty) {
       _chatHistory.add(Content.text('''
@@ -189,7 +197,8 @@ $contextData
       final month = DateTime(now.year, now.month - (5 - i), 1);
       return 'Tháng ${month.month}/${month.year}';
     });
-    final dataLines = List.generate(6, (i) => '- ${monthLabels[i]}: ${amounts[i].toStringAsFixed(0)} đồng');
+    final dataLines = List.generate(
+        6, (i) => '- ${monthLabels[i]}: ${amounts[i].toStringAsFixed(0)} đồng');
     final prompt = '''
 Bạn là trợ lý tài chính cá nhân. Dựa trên dữ liệu chi tiêu trong 6 tháng gần nhất dưới đây, hãy phân tích xu hướng (tăng, giảm, ổn định) và đưa ra nhận xét ngắn gọn, thân thiện bằng tiếng Việt. Nếu có xu hướng tăng, hãy tính % thay đổi và cung cấp gợi ý quản lý. Dữ liệu:
 ${dataLines.join('\n')}
@@ -216,7 +225,8 @@ Nếu giảm xuống còn $targetDailyAvg đồng/ngày, mỗi tháng sẽ tiế
 $monthlySavings đồng. Viết một gợi ý ngắn gọn, thực tế bằng tiếng Việt.
 ''';
     final response = await _generateWithFallback([Content.text(prompt)]);
-    return response.text ?? 'Giảm chi tiêu cho $categoryName có thể giúp bạn tiết kiệm thêm.';
+    return response.text ??
+        'Giảm chi tiêu cho $categoryName có thể giúp bạn tiết kiệm thêm.';
   }
 
   /// AI 7: OCR trích xuất thông tin hoá đơn
@@ -231,7 +241,8 @@ $monthlySavings đồng. Viết một gợi ý ngắn gọn, thực tế bằng 
 
       if (rawText != null && rawText.trim().isNotEmpty) {
         // Bước 2a: Có raw text từ ML Kit → gửi text cho Gemini parse cấu trúc
-        debugPrint('🔧 ML Kit OCR thành công, gửi raw text cho Gemini để parse cấu trúc');
+        debugPrint(
+            '🔧 ML Kit OCR thành công, gửi raw text cho Gemini để parse cấu trúc');
         final prompt = '''
 Dưới đây là văn bản được trích xuất từ ảnh hóa đơn bằng OCR (có thể còn nhiễu/sai sót):
 ---
@@ -241,7 +252,8 @@ Hãy phân tích và trả về JSON gồm: merchant (tên cửa hàng), total (
         response = await _generateWithFallback([Content.text(prompt)]);
       } else {
         // Bước 2b: ML Kit không nhận diện được → fallback gửi ảnh thẳng cho Gemini
-        debugPrint('🔧 ML Kit không nhận diện được text, fallback gửi ảnh cho Gemini');
+        debugPrint(
+            '🔧 ML Kit không nhận diện được text, fallback gửi ảnh cho Gemini');
         const prompt = '''
 Bạn là trợ lý tài chính. Hãy trích xuất các thông tin sau từ hoá đơn (ngôn ngữ tiếng Việt):
 - Tên cửa hàng/merchant
@@ -275,7 +287,8 @@ Chỉ trả về kết quả dưới dạng JSON có các trường: merchant, t
   Future<String?> _recognizeTextOnDevice(Uint8List imageBytes) async {
     // ML Kit on-device không hỗ trợ Flutter Web
     if (kIsWeb) {
-      debugPrint('🔧 ML Kit không hỗ trợ trên Flutter Web, bỏ qua bước OCR on-device');
+      debugPrint(
+          '🔧 ML Kit không hỗ trợ trên Flutter Web, bỏ qua bước OCR on-device');
       return null;
     }
 
@@ -286,18 +299,21 @@ Chỉ trả về kết quả dưới dạng JSON có các trường: merchant, t
       // mà không phải lúc nào cũng có sẵn từ Uint8List thuần túy.
       // InputImage.fromFilePath là cách ổn định nhất trên cả Android/iOS.
       final tempDir = await getTemporaryDirectory();
-      tempFile = File('${tempDir.path}/receipt_ocr_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      tempFile = File(
+          '${tempDir.path}/receipt_ocr_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await tempFile.writeAsBytes(imageBytes);
 
       final inputImage = InputImage.fromFilePath(tempFile.path);
       final recognizedText = await textRecognizer.processImage(inputImage);
 
-      debugPrint('🔧 ML Kit nhận diện được ${recognizedText.blocks.length} block(s), '
+      debugPrint(
+          '🔧 ML Kit nhận diện được ${recognizedText.blocks.length} block(s), '
           'tổng ${recognizedText.text.length} ký tự');
 
       return recognizedText.text.isEmpty ? null : recognizedText.text;
     } catch (e) {
-      debugPrint('⚠️ ML Kit TextRecognizer lỗi, sẽ fallback sang gửi ảnh cho Gemini: $e');
+      debugPrint(
+          '⚠️ ML Kit TextRecognizer lỗi, sẽ fallback sang gửi ảnh cho Gemini: $e');
       return null;
     } finally {
       // Dọn file tạm
@@ -316,7 +332,8 @@ Chỉ trả về kết quả dưới dạng JSON có các trường: merchant, t
     if (issues.isEmpty) {
       return 'Chúc mừng bạn! Chưa phát hiện vấn đề tài chính đáng chú ý nào trong tháng này.';
     }
-    final issuesText = issues.map((i) => '- ${i.title}: ${i.description}').join('\n');
+    final issuesText =
+        issues.map((i) => '- ${i.title}: ${i.description}').join('\n');
     final prompt = '''
 Bạn là trợ lý tài chính cá nhân. Hệ thống đã PHÁT HIỆN SẴN các vấn đề tài chính
 sau đây (dựa trên phân tích số liệu, không cần bạn tính toán lại):
@@ -348,6 +365,80 @@ lời chào.
 ''';
     final response = await _generateWithFallback([Content.text(prompt)]);
     return response.text ?? 'Không thể tạo đề xuất lúc này.';
+  }
+
+  /// AI diễn giải tổng hợp FinancialInsightSummary đã được Dart tính sẵn.
+  /// Tuyệt đối không gửi UID, email, ảnh hay thông tin cá nhân.
+  Future<String> explainFinancialInsights(
+      FinancialInsightSummary summary) async {
+    final buffer = StringBuffer();
+    buffer.writeln(
+        'Điểm sức khỏe tài chính: ${summary.healthScore}/100 (${summary.healthRating})');
+
+    if (summary.monthEndForecast.hasEnoughData) {
+      buffer.writeln(
+          'Tổng số dư hiện tại: ${summary.monthEndForecast.currentTotalBalance.round()}đ');
+      buffer.writeln(
+          'Đã chi trong tháng: ${summary.monthEndForecast.monthToDateExpense.round()}đ');
+      buffer.writeln(
+          'Trung bình chi linh hoạt/ngày: ${summary.monthEndForecast.averageDailyDiscretionaryExpense.round()}đ');
+      if (summary.monthEndForecast.plannedRemainingIncome > 0) {
+        buffer.writeln(
+            'Thu nhập định kỳ cam kết sắp tới: +${summary.monthEndForecast.plannedRemainingIncome.round()}đ');
+      }
+      if (summary.monthEndForecast.plannedRemainingExpense > 0) {
+        buffer.writeln(
+            'Chi phí/Hóa đơn định kỳ sắp tới: -${summary.monthEndForecast.plannedRemainingExpense.round()}đ');
+      }
+      buffer.writeln(
+          'Số dư dự kiến cuối tháng: ${summary.monthEndForecast.projectedEndBalance.round()}đ');
+    } else {
+      if (summary.monthEndForecast.plannedRemainingIncome > 0 ||
+          summary.monthEndForecast.plannedRemainingExpense > 0) {
+        buffer.writeln(
+            'Thu nhập định kỳ sắp tới: +${summary.monthEndForecast.plannedRemainingIncome.round()}đ, Chi định kỳ sắp tới: -${summary.monthEndForecast.plannedRemainingExpense.round()}đ');
+      }
+      buffer.writeln('Dự báo số dư: Chưa đủ dữ liệu chi tiêu tháng này.');
+    }
+
+    if (summary.budgetForecasts.isNotEmpty) {
+      buffer.writeln('\nTrạng thái ngân sách:');
+      for (final b in summary.budgetForecasts) {
+        if (b.status == BudgetForecastStatus.exceeded) {
+          buffer.writeln(
+              '- Danh mục "${b.categoryName}": Đã vượt hạn mức (Đã chi ${b.spent.round()}đ / Hạn mức ${b.limit.round()}đ)');
+        } else if (b.status == BudgetForecastStatus.atRisk) {
+          buffer.writeln(
+              '- Danh mục "${b.categoryName}": Có nguy cơ vượt (Đã chi ${b.spent.round()}đ / Hạn mức ${b.limit.round()}đ, dự kiến chạm hạn mức sau ${b.daysToLimit} ngày)');
+        } else if (b.status == BudgetForecastStatus.warning) {
+          buffer.writeln(
+              '- Danh mục "${b.categoryName}": Cảnh báo (Đã dùng ${(b.percentUsed * 100).round()}% hạn mức)');
+        }
+      }
+    }
+
+    if (summary.anomalies.isNotEmpty) {
+      buffer.writeln('\nChi tiêu bất thường:');
+      for (final a in summary.anomalies) {
+        buffer.writeln(
+            '- Danh mục "${a.categoryName}": Đã chi ${a.currentSpend.round()}đ (kỳ vọng ${a.expectedSpendToDate.round()}đ, vượt ${(a.excessRatio * 100 - 100).round()}%, chênh lệch +${a.excessAmount.round()}đ)');
+      }
+    }
+
+    final prompt = '''
+Bạn là trợ lý tài chính cá nhân thông minh. Dưới đây là các chỉ số tài chính ĐÃ ĐƯỢC HỆ THỐNG TÍNH TOÁN XÁC ĐỊNH bởi thuật toán (không cần bạn tính lại hay suy đoán số mới):
+
+${buffer.toString()}
+
+Hãy đóng vai trò cố vấn tài chính:
+1. Nhận xét ngắn gọn về sức khỏe tài chính và dòng tiền hiện tại (1-2 câu).
+2. Đưa ra TỐI ĐA 3 đề xuất cụ thể, khả thi để tối ưu chi tiêu hoặc tránh rủi ro (có ghi rõ danh mục/số tiền từ dữ liệu trên).
+3. Tuyệt đối KHÔNG tư vấn đầu tư, chứng khoán, bất động sản hay tiền mã hóa.
+4. Trả lời bằng tiếng Việt, thân thiện, rõ ràng, không bịa thêm số liệu không có trong input.
+''';
+
+    final response = await _generateWithFallback([Content.text(prompt)]);
+    return response.text ?? 'Không thể tải phần giải thích AI lúc này.';
   }
 
   String _stripMarkdownCodeFence(String text) {

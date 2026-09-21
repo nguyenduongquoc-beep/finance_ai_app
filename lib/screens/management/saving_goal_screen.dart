@@ -25,44 +25,46 @@ class SavingGoalScreen extends StatelessWidget {
 
         return Scaffold(
           backgroundColor: AppColors.background,
-      appBar: AppBar(title: const Text('Mục tiêu tiết kiệm')),
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: AppColors.primary,
-        onPressed: () => _showGoalDialog(context, firestoreService, uid),
-        icon: const Icon(Icons.add, color: Colors.white),
-        label: const Text('Thêm mục tiêu', style: TextStyle(color: Colors.white)),
-      ),
-      body: StreamBuilder<List<SavingGoal>>(
-        stream: firestoreService.streamSavingGoals(uid),
-        builder: (context, snap) {
-          if (snap.hasError) return StreamErrorWidget(error: snap.error.toString());
-          final goals = snap.data ?? [];
-          if (!snap.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (goals.isEmpty) {
-            return _buildEmptyState(context, firestoreService, uid);
-          }
-          return Column(
-            children: [
-              _buildTotalSavedCard(goals),
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-                  itemCount: goals.length,
-                  itemBuilder: (context, i) => _GoalCard(
-                    goal: goals[i],
-                    firestoreService: firestoreService,
+          appBar: AppBar(title: const Text('Mục tiêu tiết kiệm')),
+          floatingActionButton: FloatingActionButton.extended(
+            backgroundColor: AppColors.primary,
+            onPressed: () => _showGoalDialog(context, firestoreService, uid),
+            icon: const Icon(Icons.add, color: Colors.white),
+            label: const Text('Thêm mục tiêu',
+                style: TextStyle(color: Colors.white)),
+          ),
+          body: StreamBuilder<List<SavingGoal>>(
+            stream: firestoreService.streamSavingGoals(uid),
+            builder: (context, snap) {
+              if (snap.hasError)
+                return StreamErrorWidget(error: snap.error.toString());
+              final goals = snap.data ?? [];
+              if (!snap.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (goals.isEmpty) {
+                return _buildEmptyState(context, firestoreService, uid);
+              }
+              return Column(
+                children: [
+                  _buildTotalSavedCard(goals),
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+                      itemCount: goals.length,
+                      itemBuilder: (context, i) => _GoalCard(
+                        goal: goals[i],
+                        firestoreService: firestoreService,
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
+                ],
+              );
+            },
+          ),
+        );
+      },
     );
-  },
-);
   }
 
   Widget _buildTotalSavedCard(List<SavingGoal> goals) {
@@ -85,7 +87,8 @@ class SavingGoalScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Tổng đang tiết kiệm',
-                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                    style: TextStyle(
+                        fontSize: 12, color: AppColors.textSecondary)),
                 Text(AppFormatters.currency(totalSaved),
                     style: const TextStyle(
                         fontWeight: FontWeight.bold,
@@ -190,7 +193,8 @@ class SavingGoalScreen extends StatelessWidget {
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
             onPressed: () async {
-              final target = AppFormatters.parseCurrencyInput(amountController.text);
+              final target =
+                  AppFormatters.parseCurrencyInput(amountController.text);
               final months = int.tryParse(monthsController.text) ?? 1;
               final name = nameController.text.trim();
               if (name.isEmpty || target <= 0) return;
@@ -263,7 +267,9 @@ class _GoalCardState extends State<_GoalCard> {
 
     if (activeWallets.isEmpty) {
       if (mounted) {
-        AppSnackbar.show(context, 'Bạn chưa có ví nào để nạp tiền. Vui lòng tạo ví trước.', isError: true);
+        AppSnackbar.show(
+            context, 'Bạn chưa có ví nào để nạp tiền. Vui lòng tạo ví trước.',
+            isError: true);
       }
       return;
     }
@@ -274,7 +280,8 @@ class _GoalCardState extends State<_GoalCard> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Text('Nạp tiền vào "${widget.goal.name}"'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -312,7 +319,9 @@ class _GoalCardState extends State<_GoalCard> {
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Hủy')),
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
               onPressed: () => Navigator.pop(ctx, true),
@@ -328,7 +337,8 @@ class _GoalCardState extends State<_GoalCard> {
     final deposit = AppFormatters.parseCurrencyInput(amountController.text);
     if (deposit <= 0 || selectedWalletId == null) {
       if (mounted) {
-        AppSnackbar.show(context, 'Vui lòng nhập số tiền hợp lệ', isError: true);
+        AppSnackbar.show(context, 'Vui lòng nhập số tiền hợp lệ',
+            isError: true);
       }
       return;
     }
@@ -347,12 +357,14 @@ class _GoalCardState extends State<_GoalCard> {
       );
       await widget.firestoreService.createTransaction(tx);
       if (mounted) {
-        AppSnackbar.show(context, 'Đã nạp ${AppFormatters.currency(deposit)} vào mục tiêu');
+        AppSnackbar.show(
+            context, 'Đã nạp ${AppFormatters.currency(deposit)} vào mục tiêu');
       }
     } catch (e) {
       debugPrint('❌ Lỗi khi nạp tiền mục tiêu tiết kiệm: $e');
       if (mounted) {
-        AppSnackbar.show(context, 'Không thể nạp tiền. Vui lòng thử lại.', isError: true);
+        final errorMsg = e.toString().replaceFirst('Exception: ', '');
+        AppSnackbar.show(context, errorMsg, isError: true);
       }
     }
   }
@@ -367,7 +379,9 @@ class _GoalCardState extends State<_GoalCard> {
 
     if (activeWallets.isEmpty) {
       if (mounted) {
-        AppSnackbar.show(context, 'Bạn chưa có ví nào để nhận lại tiền. Vui lòng tạo ví trước.', isError: true);
+        AppSnackbar.show(context,
+            'Bạn chưa có ví nào để nhận lại tiền. Vui lòng tạo ví trước.',
+            isError: true);
       }
       return;
     }
@@ -378,7 +392,8 @@ class _GoalCardState extends State<_GoalCard> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Text('Rút tiền từ "${widget.goal.name}"'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -421,7 +436,9 @@ class _GoalCardState extends State<_GoalCard> {
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Hủy')),
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: AppColors.expense),
               onPressed: () => Navigator.pop(ctx, true),
@@ -434,10 +451,12 @@ class _GoalCardState extends State<_GoalCard> {
 
     if (confirmed != true) return;
 
-    final withdrawAmount = AppFormatters.parseCurrencyInput(amountController.text);
+    final withdrawAmount =
+        AppFormatters.parseCurrencyInput(amountController.text);
     if (withdrawAmount <= 0 || selectedWalletId == null) {
       if (mounted) {
-        AppSnackbar.show(context, 'Vui lòng nhập số tiền hợp lệ', isError: true);
+        AppSnackbar.show(context, 'Vui lòng nhập số tiền hợp lệ',
+            isError: true);
       }
       return;
     }
@@ -456,12 +475,14 @@ class _GoalCardState extends State<_GoalCard> {
       );
       await widget.firestoreService.createTransaction(tx);
       if (mounted) {
-        AppSnackbar.show(context, 'Đã rút ${AppFormatters.currency(withdrawAmount)} về ví');
+        AppSnackbar.show(
+            context, 'Đã rút ${AppFormatters.currency(withdrawAmount)} về ví');
       }
     } catch (e) {
       debugPrint('❌ Lỗi khi rút tiền mục tiêu tiết kiệm: $e');
       if (mounted) {
-        AppSnackbar.show(context, 'Không thể rút tiền. Vui lòng thử lại.', isError: true);
+        final errorMsg = e.toString().replaceFirst('Exception: ', '');
+        AppSnackbar.show(context, errorMsg, isError: true);
       }
     }
   }
@@ -523,7 +544,8 @@ class _GoalCardState extends State<_GoalCard> {
                         ],
                       ),
                       const SizedBox(height: 2),
-                      Text('Mục tiêu: ${AppFormatters.currency(goal.targetAmount)}',
+                      Text(
+                          'Mục tiêu: ${AppFormatters.currency(goal.targetAmount)}',
                           style: TextStyle(
                               color: AppColors.textSecondary, fontSize: 12)),
                     ],
@@ -532,9 +554,7 @@ class _GoalCardState extends State<_GoalCard> {
                 Text(
                   '${(pct * 100).round()}%',
                   style: TextStyle(
-                      color: color,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 22),
+                      color: color, fontWeight: FontWeight.bold, fontSize: 22),
                 ),
               ],
             ),
@@ -561,14 +581,12 @@ class _GoalCardState extends State<_GoalCard> {
                 Text(
                   'Đã tiết kiệm: ${AppFormatters.currency(goal.savedAmount)}',
                   style: TextStyle(
-                      fontSize: 13,
-                      color: color,
-                      fontWeight: FontWeight.w600),
+                      fontSize: 13, color: color, fontWeight: FontWeight.w600),
                 ),
                 Text(
                   'Còn: ${AppFormatters.currency(goal.targetAmount - goal.savedAmount)}',
-                  style: TextStyle(
-                      fontSize: 13, color: AppColors.textSecondary),
+                  style:
+                      TextStyle(fontSize: 13, color: AppColors.textSecondary),
                 ),
               ],
             ),
@@ -579,7 +597,8 @@ class _GoalCardState extends State<_GoalCard> {
                 child: TextButton.icon(
                   onPressed: _withdrawFromGoal,
                   icon: const Icon(Icons.undo_rounded, size: 14),
-                  label: const Text('Rút tiền về ví', style: TextStyle(fontSize: 12)),
+                  label: const Text('Rút tiền về ví',
+                      style: TextStyle(fontSize: 12)),
                   style: TextButton.styleFrom(
                     foregroundColor: AppColors.textSecondary,
                     padding: const EdgeInsets.symmetric(horizontal: 0),
@@ -594,8 +613,7 @@ class _GoalCardState extends State<_GoalCard> {
               Text(
                 'Cần ${AppFormatters.currency(goal.monthlyRequired)}/tháng '
                 '≈ ${AppFormatters.currency(goal.dailyRequired)}/ngày',
-                style:
-                    TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
               ),
             ],
             const SizedBox(height: 14),
@@ -607,7 +625,8 @@ class _GoalCardState extends State<_GoalCard> {
                     child: OutlinedButton.icon(
                       onPressed: _addDeposit,
                       icon: const Icon(Icons.savings_outlined, size: 16),
-                      label: const Text('Nạp tiền', style: TextStyle(fontSize: 13)),
+                      label: const Text('Nạp tiền',
+                          style: TextStyle(fontSize: 13)),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.primary,
                         side: const BorderSide(color: AppColors.primary),
@@ -633,7 +652,9 @@ class _GoalCardState extends State<_GoalCard> {
                         _isLoadingPlan
                             ? 'Đang phân tích...'
                             : _aiPlan != null
-                                ? (_planExpanded ? 'Ẩn kế hoạch' : 'Xem kế hoạch')
+                                ? (_planExpanded
+                                    ? 'Ẩn kế hoạch'
+                                    : 'Xem kế hoạch')
                                 : 'AI Kế hoạch',
                         style: const TextStyle(fontSize: 13),
                       ),

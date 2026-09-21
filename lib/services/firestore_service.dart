@@ -7,7 +7,10 @@ import '../models/transaction_model.dart';
 import '../models/budget_model.dart';
 import '../models/saving_goal_model.dart';
 import '../models/notification_model.dart';
+import '../models/recurring_transaction_model.dart';
+import 'recurring_transaction_service.dart';
 import 'storage_service.dart';
+import '../utils/transaction_business_logic.dart';
 
 /// ============================================================
 /// FIRESTORE SERVICE
@@ -29,8 +32,11 @@ class FirestoreService {
   }
 
   Stream<AppUser?> streamUserProfile(String uid) {
-    return _db.collection('users').doc(uid).snapshots().map(
-        (doc) => doc.exists ? AppUser.fromMap(doc.data()!, doc.id) : null);
+    return _db
+        .collection('users')
+        .doc(uid)
+        .snapshots()
+        .map((doc) => doc.exists ? AppUser.fromMap(doc.data()!, doc.id) : null);
   }
 
   Future<void> updateUserProfile(String uid, Map<String, dynamic> data) {
@@ -49,7 +55,8 @@ class FirestoreService {
         .where('userId', isEqualTo: userId)
         .snapshots()
         .map((snap) {
-      final list = snap.docs.map((d) => Wallet.fromMap(d.data(), d.id)).toList();
+      final list =
+          snap.docs.map((d) => Wallet.fromMap(d.data(), d.id)).toList();
       list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return list;
     });
@@ -82,7 +89,8 @@ class FirestoreService {
     return txQuery.docs.isNotEmpty;
   }
 
-  Future<void> reassignAndDeleteWallet(String userId, String oldWalletId, String newWalletId) async {
+  Future<void> reassignAndDeleteWallet(
+      String userId, String oldWalletId, String newWalletId) async {
     final oldWalletDoc = await _db.collection('wallets').doc(oldWalletId).get();
     if (!oldWalletDoc.exists) {
       throw Exception('Ví nguồn không tồn tại');
@@ -143,7 +151,8 @@ class FirestoreService {
       query = query.where('type', isEqualTo: type);
     }
     return query.snapshots().map((snap) {
-      final list = snap.docs.map((d) => Category.fromMap(d.data(), d.id)).toList();
+      final list =
+          snap.docs.map((d) => Category.fromMap(d.data(), d.id)).toList();
       list.sort((a, b) => a.name.compareTo(b.name));
       return list;
     });
@@ -174,7 +183,8 @@ class FirestoreService {
     return budgetQuery.docs.isNotEmpty;
   }
 
-  Future<void> reassignAndDeleteCategory(String userId, String oldCategoryId, String newCategoryId) async {
+  Future<void> reassignAndDeleteCategory(
+      String userId, String oldCategoryId, String newCategoryId) async {
     final txQuery = await _db
         .collection('transactions')
         .where('userId', isEqualTo: userId)
@@ -185,7 +195,7 @@ class FirestoreService {
         .where('userId', isEqualTo: userId)
         .where('categoryId', isEqualTo: oldCategoryId)
         .get();
-    
+
     final batch = _db.batch();
     for (var doc in txQuery.docs) {
       batch.update(doc.reference, {'categoryId': newCategoryId});
@@ -199,16 +209,18 @@ class FirestoreService {
 
   // ---------------- TRANSACTIONS ----------------
   Future<String> createTransaction(AppTransaction tx) async {
+    TransactionBusinessLogic.validateAmount(tx.amount);
+
     final txRef = _db.collection('transactions').doc();
     final walletRef = _db.collection('wallets').doc(tx.walletId);
     DocumentReference? toWalletRef;
 
     if (tx.type == 'transfer') {
       if (tx.toWalletId == null || tx.toWalletId!.isEmpty) {
-        throw Exception('Giao dịch chuyển tiền cần chỉ định ví đích');
+        throw Exception('Giao dịch chuyển tiền cần chỉ định ví đích.');
       }
       if (tx.toWalletId == tx.walletId) {
-        throw Exception('Ví nguồn và ví đích không được trùng nhau');
+        throw Exception('Ví nguồn và ví đích không được trùng nhau.');
       }
       toWalletRef = _db.collection('wallets').doc(tx.toWalletId);
     }
@@ -216,7 +228,7 @@ class FirestoreService {
     DocumentReference? goalRef;
     if (tx.type == 'goal_deposit' || tx.type == 'goal_withdraw') {
       if (tx.goalId == null || tx.goalId!.isEmpty) {
-        throw Exception('Giao dịch mục tiêu tiết kiệm cần chỉ định mục tiêu');
+        throw Exception('Giao dịch mục tiêu tiết kiệm cần chỉ định mục tiêu.');
       }
       goalRef = _db.collection('savingGoals').doc(tx.goalId);
     }
@@ -231,107 +243,108 @@ class FirestoreService {
           .where('month', isEqualTo: monthStr)
           .limit(1)
           .get();
-      if (budgetQuery.docs.isNotEmpty) budgetRef = budgetQuery.docs.first.reference;
+      if (budgetQuery.docs.isNotEmpty) {
+        budgetRef = budgetQuery.docs.first.reference;
+      }
     }
 
     await _db.runTransaction((transaction) async {
       final walletSnap = await transaction.get(walletRef);
-      if (!walletSnap.exists) throw Exception('Ví không tồn tại');
+      if (!walletSnap.exists) throw Exception('Ví không tồn tại.');
+      final wallet = Wallet.fromMap(
+          walletSnap.data() as Map<String, dynamic>, walletSnap.id);
+
+      Wallet? toWallet;
       if (toWalletRef != null) {
         final toWalletSnap = await transaction.get(toWalletRef);
-        if (!toWalletSnap.exists) throw Exception('Ví đích không tồn tại');
+        if (!toWalletSnap.exists) throw Exception('Ví đích không tồn tại.');
+        toWallet = Wallet.fromMap(
+            toWalletSnap.data() as Map<String, dynamic>, toWalletSnap.id);
       }
-      DocumentSnapshot? goalSnap;
+
+      SavingGoal? goal;
       if (goalRef != null) {
-        goalSnap = await transaction.get(goalRef);
-        if (!goalSnap.exists) throw Exception('Mục tiêu tiết kiệm không tồn tại');
+        final goalSnap = await transaction.get(goalRef);
+        if (!goalSnap.exists) {
+          throw Exception('Mục tiêu tiết kiệm không tồn tại.');
+        }
+        goal = SavingGoal.fromMap(
+            goalSnap.data() as Map<String, dynamic>, goalSnap.id);
       }
+
+      final effects = TransactionBusinessLogic.processCreateTransaction(
+        tx: tx,
+        wallet: wallet,
+        toWallet: toWallet,
+        goal: goal,
+      );
+
       transaction.set(txRef, tx.toMap());
 
-      switch (tx.type) {
-        case 'income':
-          transaction.update(walletRef, {'balance': FieldValue.increment(tx.amount)});
-          break;
-        case 'expense':
-          transaction.update(walletRef, {'balance': FieldValue.increment(-tx.amount)});
-          break;
-        case 'transfer':
-          transaction.update(walletRef, {'balance': FieldValue.increment(-tx.amount)});
-          transaction.update(toWalletRef!, {'balance': FieldValue.increment(tx.amount)});
-          break;
-        case 'goal_deposit':
-          final goalData = goalSnap!.data() as Map<String, dynamic>;
-          final currentSaved = (goalData['savedAmount'] as num? ?? 0).toDouble();
-          final targetAmount = (goalData['targetAmount'] as num? ?? 0).toDouble();
-          final walletData = walletSnap.data() as Map<String, dynamic>;
-          final currentBalance = (walletData['balance'] as num? ?? 0).toDouble();
-          if (tx.amount > currentBalance) {
-            throw Exception('Số dư ví không đủ để nạp vào mục tiêu');
-          }
-          transaction.update(walletRef, {'balance': FieldValue.increment(-tx.amount)});
-          transaction.update(goalRef!, {
-            'savedAmount': (currentSaved + tx.amount).clamp(0, targetAmount),
-          });
-          break;
-        case 'goal_withdraw':
-          final goalDataW = goalSnap!.data() as Map<String, dynamic>;
-          final currentSavedW = (goalDataW['savedAmount'] as num? ?? 0).toDouble();
-          if (tx.amount > currentSavedW) {
-            throw Exception('Số tiền rút vượt quá số tiền đã tiết kiệm trong mục tiêu');
-          }
-          transaction.update(walletRef, {'balance': FieldValue.increment(tx.amount)});
-          transaction.update(goalRef!, {
-            'savedAmount': currentSavedW - tx.amount,
-          });
-          break;
+      if (effects.newSourceBalance != null) {
+        transaction.update(walletRef, {'balance': effects.newSourceBalance});
+      }
+      if (effects.newTargetBalance != null && toWalletRef != null) {
+        transaction.update(toWalletRef, {'balance': effects.newTargetBalance});
+      }
+      if (effects.newGoalSavedAmount != null && goalRef != null) {
+        transaction
+            .update(goalRef, {'savedAmount': effects.newGoalSavedAmount});
       }
     });
 
     if (tx.type == 'expense' && budgetRef != null) {
-      final updatedBudget = await budgetRef.get();
-      final data = updatedBudget.data() as Map<String, dynamic>?;
-      if (data != null) {
-        final limit = (data['limit'] as num).toDouble();
-        final newSpent = await getCategorySpentThisMonth(tx.userId, tx.categoryId, month: tx.date);
-        final oldSpent = newSpent - tx.amount;
-        if (limit > 0 && newSpent >= limit * 0.8 && oldSpent < limit * 0.8) {
-          await createNotification(AppNotification(
-            notificationId: '',
-            userId: tx.userId,
-            title: 'Cảnh báo ngân sách',
-            content: 'Bạn đã tiêu vượt 80% ngân sách tháng $monthStr cho danh mục này.',
-            status: 'unread',
-            type: 'budget',
-            createdAt: DateTime.now(),
-          ));
+      try {
+        final updatedBudget = await budgetRef.get();
+        final data = updatedBudget.data() as Map<String, dynamic>?;
+        if (data != null) {
+          final limit = (data['limit'] as num).toDouble();
+          final newSpent = await getCategorySpentThisMonth(
+              tx.userId, tx.categoryId,
+              month: tx.date);
+          final oldSpent = newSpent - tx.amount;
+          if (limit > 0 && newSpent >= limit * 0.8 && oldSpent < limit * 0.8) {
+            await createNotification(AppNotification(
+              notificationId: '',
+              userId: tx.userId,
+              title: 'Cảnh báo ngân sách',
+              content:
+                  'Bạn đã tiêu vượt 80% ngân sách tháng $monthStr cho danh mục này.',
+              status: 'unread',
+              type: 'budget',
+              createdAt: DateTime.now(),
+            ));
+          }
         }
-      }
+      } catch (_) {}
     }
 
     return txRef.id;
   }
 
   Stream<List<AppTransaction>> streamTransactions(
-      String userId, {
-        DateTime? from,
-        DateTime? to,
-      }) {
-    Query<Map<String, dynamic>> query = _db
-        .collection('transactions')
-        .where('userId', isEqualTo: userId);
-        
+    String userId, {
+    DateTime? from,
+    DateTime? to,
+  }) {
+    Query<Map<String, dynamic>> query =
+        _db.collection('transactions').where('userId', isEqualTo: userId);
+
     if (from != null) {
-      query = query.where('date', isGreaterThanOrEqualTo: from.toIso8601String());
+      query =
+          query.where('date', isGreaterThanOrEqualTo: from.toIso8601String());
     }
     if (to != null) {
       query = query.where('date', isLessThanOrEqualTo: to.toIso8601String());
     }
-    
+
     // Sort by date descending (Requires Composite Index in Firestore)
     query = query.orderBy('date', descending: true);
-        
+
     return query.snapshots().map((snap) {
-      return snap.docs.map((d) => AppTransaction.fromMap(d.data(), d.id)).toList();
+      return snap.docs
+          .map((d) => AppTransaction.fromMap(d.data(), d.id))
+          .toList();
     });
   }
 
@@ -344,6 +357,16 @@ class FirestoreService {
     AppTransaction oldTx,
     AppTransaction newTx,
   ) async {
+    if (oldTx.type == 'goal_deposit' ||
+        oldTx.type == 'goal_withdraw' ||
+        newTx.type == 'goal_deposit' ||
+        newTx.type == 'goal_withdraw') {
+      throw Exception(
+          'Giao dịch nạp/rút mục tiêu không thể sửa. Vui lòng xóa và tạo lại giao dịch.');
+    }
+
+    TransactionBusinessLogic.validateAmount(newTx.amount);
+
     final monthStrNew = DateFormat('MM/yyyy').format(newTx.date);
 
     DocumentReference? newBudgetRef;
@@ -358,115 +381,171 @@ class FirestoreService {
       if (q.docs.isNotEmpty) newBudgetRef = q.docs.first.reference;
     }
 
+    final txRef = _db.collection('transactions').doc(newTx.transactionId);
+    final oldWalletRef = _db.collection('wallets').doc(oldTx.walletId);
+    final newWalletRef = _db.collection('wallets').doc(newTx.walletId);
+    final oldToWalletRef =
+        (oldTx.type == 'transfer' && oldTx.toWalletId != null)
+            ? _db.collection('wallets').doc(oldTx.toWalletId!)
+            : null;
+    final newToWalletRef =
+        (newTx.type == 'transfer' && newTx.toWalletId != null)
+            ? _db.collection('wallets').doc(newTx.toWalletId!)
+            : null;
+
     await _db.runTransaction((txn) async {
-      // 1. Hoàn tác ảnh hưởng của oldTx
-      switch (oldTx.type) {
-        case 'expense':
-          txn.update(_db.collection('wallets').doc(oldTx.walletId),
-              {'balance': FieldValue.increment(oldTx.amount)});
-          break;
-        case 'income':
-          txn.update(_db.collection('wallets').doc(oldTx.walletId),
-              {'balance': FieldValue.increment(-oldTx.amount)});
-          break;
-        case 'transfer':
-          txn.update(_db.collection('wallets').doc(oldTx.walletId),
-              {'balance': FieldValue.increment(oldTx.amount)});
-          if (oldTx.toWalletId != null) {
-            txn.update(_db.collection('wallets').doc(oldTx.toWalletId),
-                {'balance': FieldValue.increment(-oldTx.amount)});
-          }
-          break;
+      final oldWalletSnap = await txn.get(oldWalletRef);
+      if (!oldWalletSnap.exists) throw Exception('Ví nguồn không tồn tại.');
+      final oldWallet = Wallet.fromMap(
+          oldWalletSnap.data() as Map<String, dynamic>, oldWalletSnap.id);
+
+      final newWalletSnap = (newTx.walletId == oldTx.walletId)
+          ? oldWalletSnap
+          : await txn.get(newWalletRef);
+      if (!newWalletSnap.exists) throw Exception('Ví nguồn mới không tồn tại.');
+      final newWallet = Wallet.fromMap(
+          newWalletSnap.data() as Map<String, dynamic>, newWalletSnap.id);
+
+      Wallet? oldToWallet;
+      if (oldToWalletRef != null) {
+        final oldToSnap = await txn.get(oldToWalletRef);
+        if (oldToSnap.exists) {
+          oldToWallet = Wallet.fromMap(
+              oldToSnap.data() as Map<String, dynamic>, oldToSnap.id);
+        }
       }
 
-      // 2. Áp dụng ảnh hưởng của newTx
-      switch (newTx.type) {
-        case 'expense':
-          txn.update(_db.collection('wallets').doc(newTx.walletId),
-              {'balance': FieldValue.increment(-newTx.amount)});
-          break;
-        case 'income':
-          txn.update(_db.collection('wallets').doc(newTx.walletId),
-              {'balance': FieldValue.increment(newTx.amount)});
-          break;
-        case 'transfer':
-          txn.update(_db.collection('wallets').doc(newTx.walletId),
-              {'balance': FieldValue.increment(-newTx.amount)});
-          if (newTx.toWalletId != null) {
-            txn.update(_db.collection('wallets').doc(newTx.toWalletId),
-                {'balance': FieldValue.increment(newTx.amount)});
-          }
-          break;
+      Wallet? newToWallet;
+      if (newToWalletRef != null) {
+        final newToSnap = (oldTx.type == 'transfer' &&
+                newTx.toWalletId == oldTx.toWalletId &&
+                oldToWallet != null)
+            ? await txn.get(oldToWalletRef!)
+            : await txn.get(newToWalletRef);
+        if (!newToSnap.exists) throw Exception('Ví đích không tồn tại.');
+        newToWallet = Wallet.fromMap(
+            newToSnap.data() as Map<String, dynamic>, newToSnap.id);
       }
 
-      txn.update(_db.collection('transactions').doc(newTx.transactionId), newTx.toMap());
+      final balanceMap = TransactionBusinessLogic.processUpdateTransaction(
+        oldTx: oldTx,
+        newTx: newTx,
+        oldWallet: oldWallet,
+        newWallet: newWallet,
+        oldToWallet: oldToWallet,
+        newToWallet: newToWallet,
+      );
+
+      // Cập nhật tất cả các ví đã tính toán vào transaction
+      balanceMap.forEach((walletId, newBalance) {
+        txn.update(
+            _db.collection('wallets').doc(walletId), {'balance': newBalance});
+      });
+
+      txn.update(txRef, newTx.toMap());
     });
 
     if (newTx.type == 'expense' && newBudgetRef != null) {
-      final budgetDoc = await newBudgetRef.get();
-      final data = budgetDoc.data() as Map<String, dynamic>?;
-      if (data != null) {
-        final limit = (data['limit'] as num).toDouble();
-        final newSpent = await getCategorySpentThisMonth(newTx.userId, newTx.categoryId, month: newTx.date);
-        final delta = newTx.categoryId == oldTx.categoryId ? (newTx.amount - oldTx.amount) : newTx.amount;
-        final oldSpent = newSpent - delta;
-        if (limit > 0 && newSpent >= limit * 0.8 && oldSpent < limit * 0.8) {
-          await createNotification(AppNotification(
-            notificationId: '',
-            userId: newTx.userId,
-            title: 'Cảnh báo ngân sách',
-            content: 'Giao dịch vừa sửa đã làm bạn tiêu vượt 80% ngân sách tháng $monthStrNew cho danh mục này.',
-            status: 'unread',
-            type: 'budget',
-            createdAt: DateTime.now(),
-          ));
+      try {
+        final budgetDoc = await newBudgetRef.get();
+        final data = budgetDoc.data() as Map<String, dynamic>?;
+        if (data != null) {
+          final limit = (data['limit'] as num).toDouble();
+          final newSpent = await getCategorySpentThisMonth(
+              newTx.userId, newTx.categoryId,
+              month: newTx.date);
+          final delta = newTx.categoryId == oldTx.categoryId
+              ? (newTx.amount - oldTx.amount)
+              : newTx.amount;
+          final oldSpent = newSpent - delta;
+          if (limit > 0 && newSpent >= limit * 0.8 && oldSpent < limit * 0.8) {
+            await createNotification(AppNotification(
+              notificationId: '',
+              userId: newTx.userId,
+              title: 'Cảnh báo ngân sách',
+              content:
+                  'Giao dịch vừa sửa đã làm bạn tiêu vượt 80% ngân sách tháng $monthStrNew cho danh mục này.',
+              status: 'unread',
+              type: 'budget',
+              createdAt: DateTime.now(),
+            ));
+          }
         }
-      }
+      } catch (_) {}
     }
   }
 
   Future<void> deleteTransaction(AppTransaction tx) async {
-    await _db.collection('transactions').doc(tx.transactionId).delete();
+    final txRef = _db.collection('transactions').doc(tx.transactionId);
+    final walletRef = _db.collection('wallets').doc(tx.walletId);
+    final toWalletRef = (tx.type == 'transfer' &&
+            tx.toWalletId != null &&
+            tx.toWalletId!.isNotEmpty)
+        ? _db.collection('wallets').doc(tx.toWalletId!)
+        : null;
+    final goalRef =
+        ((tx.type == 'goal_deposit' || tx.type == 'goal_withdraw') &&
+                tx.goalId != null &&
+                tx.goalId!.isNotEmpty)
+            ? _db.collection('savingGoals').doc(tx.goalId!)
+            : null;
 
-    switch (tx.type) {
-      case 'income':
-        await adjustWalletBalance(tx.walletId, -tx.amount);
-        break;
-      case 'expense':
-        await adjustWalletBalance(tx.walletId, tx.amount);
-        break;
-      case 'transfer':
-        await adjustWalletBalance(tx.walletId, tx.amount);
-        if (tx.toWalletId != null && tx.toWalletId!.isNotEmpty) {
-          await adjustWalletBalance(tx.toWalletId!, -tx.amount);
+    await _db.runTransaction((transaction) async {
+      final txSnap = await transaction.get(txRef);
+      if (!txSnap.exists) return; // Giao dịch đã bị xóa trước đó
+
+      final walletSnap = await transaction.get(walletRef);
+      Wallet? wallet;
+      if (walletSnap.exists) {
+        wallet = Wallet.fromMap(
+            walletSnap.data() as Map<String, dynamic>, walletSnap.id);
+      }
+
+      Wallet? toWallet;
+      if (toWalletRef != null) {
+        final toWalletSnap = await transaction.get(toWalletRef);
+        if (toWalletSnap.exists) {
+          toWallet = Wallet.fromMap(
+              toWalletSnap.data() as Map<String, dynamic>, toWalletSnap.id);
         }
-        break;
-      case 'goal_deposit':
-        await adjustWalletBalance(tx.walletId, tx.amount);
-        if (tx.goalId != null) {
-          final goalDoc = await _db.collection('savingGoals').doc(tx.goalId).get();
-          if (goalDoc.exists) {
-            final saved = (goalDoc.data()!['savedAmount'] as num? ?? 0).toDouble();
-            await _db.collection('savingGoals').doc(tx.goalId).update({
-              'savedAmount': (saved - tx.amount).clamp(0, double.infinity),
-            });
-          }
+      }
+
+      SavingGoal? goal;
+      if (goalRef != null) {
+        final goalSnap = await transaction.get(goalRef);
+        if (goalSnap.exists) {
+          goal = SavingGoal.fromMap(
+              goalSnap.data() as Map<String, dynamic>, goalSnap.id);
         }
-        break;
-      case 'goal_withdraw':
-        await adjustWalletBalance(tx.walletId, -tx.amount);
-        if (tx.goalId != null) {
-          final goalDoc = await _db.collection('savingGoals').doc(tx.goalId).get();
-          if (goalDoc.exists) {
-            final saved = (goalDoc.data()!['savedAmount'] as num? ?? 0).toDouble();
-            final target = (goalDoc.data()!['targetAmount'] as num? ?? 0).toDouble();
-            await _db.collection('savingGoals').doc(tx.goalId).update({
-              'savedAmount': (saved + tx.amount).clamp(0, target),
-            });
-          }
+      }
+
+      final effects = TransactionBusinessLogic.processDeleteTransaction(
+        tx: tx,
+        wallet: wallet,
+        toWallet: toWallet,
+        goal: goal,
+      );
+
+      if (walletSnap.exists && effects.newSourceBalance != null) {
+        transaction.update(walletRef, {'balance': effects.newSourceBalance});
+      }
+      if (toWalletRef != null && effects.newTargetBalance != null) {
+        final toSnap = await transaction.get(toWalletRef);
+        if (toSnap.exists) {
+          transaction
+              .update(toWalletRef, {'balance': effects.newTargetBalance});
         }
-        break;
-    }
+      }
+      if (goalRef != null && effects.newGoalSavedAmount != null) {
+        final gSnap = await transaction.get(goalRef);
+        if (gSnap.exists) {
+          transaction
+              .update(goalRef, {'savedAmount': effects.newGoalSavedAmount});
+        }
+      }
+
+      transaction.delete(txRef);
+    });
 
     if (tx.image != null && tx.image!.isNotEmpty) {
       try {
@@ -488,8 +567,10 @@ class FirestoreService {
       query = query.where('month', isEqualTo: month);
     }
     return query.snapshots().map((snap) {
-      final list = snap.docs.map((d) => Budget.fromMap(d.data(), d.id)).toList();
-      list.sort((a, b) => b.month.compareTo(a.month)); // Sort text MM/yyyy, not perfect but okay
+      final list =
+          snap.docs.map((d) => Budget.fromMap(d.data(), d.id)).toList();
+      list.sort((a, b) => b.month
+          .compareTo(a.month)); // Sort text MM/yyyy, not perfect but okay
       return list;
     });
   }
@@ -511,7 +592,8 @@ class FirestoreService {
   }) async {
     final target = month ?? DateTime.now();
     final monthStart = DateTime(target.year, target.month, 1);
-    final monthEnd = DateTime(target.year, target.month + 1, 1).subtract(const Duration(seconds: 1));
+    final monthEnd = DateTime(target.year, target.month + 1, 1)
+        .subtract(const Duration(seconds: 1));
     final txQuery = await _db
         .collection('transactions')
         .where('userId', isEqualTo: userId)
@@ -541,7 +623,8 @@ class FirestoreService {
         .where('userId', isEqualTo: userId)
         .snapshots()
         .map((snap) {
-      final list = snap.docs.map((d) => SavingGoal.fromMap(d.data(), d.id)).toList();
+      final list =
+          snap.docs.map((d) => SavingGoal.fromMap(d.data(), d.id)).toList();
       list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return list;
     });
@@ -562,7 +645,9 @@ class FirestoreService {
         .where('userId', isEqualTo: userId)
         .snapshots()
         .map((snap) {
-      final list = snap.docs.map((d) => AppNotification.fromMap(d.data(), d.id)).toList();
+      final list = snap.docs
+          .map((d) => AppNotification.fromMap(d.data(), d.id))
+          .toList();
       list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return list;
     });
@@ -578,7 +663,8 @@ class FirestoreService {
   }
 
   /// Lấy budget cho danh mục trong tháng hiện tại (hoặc tháng chỉ định)
-  Future<Budget?> getCategoryBudget(String userId, String categoryId, {String? month}) async {
+  Future<Budget?> getCategoryBudget(String userId, String categoryId,
+      {String? month}) async {
     final now = DateTime.now();
     final monthStr = month ?? DateFormat('MM/yyyy').format(now);
     final query = await _db
@@ -593,12 +679,207 @@ class FirestoreService {
     return Budget.fromMap(doc.data(), doc.id);
   }
 
-
-
   Future<void> markNotificationRead(String notificationId) {
     return _db
         .collection('notifications')
         .doc(notificationId)
         .update({'status': 'read'});
+  }
+
+  // ---------------- RECURRING TRANSACTIONS ----------------
+  Future<String> createRecurringTransaction(
+      RecurringTransactionSchedule schedule) async {
+    RecurringTransactionSchedule.validateAmount(schedule.amount);
+
+    final walletDoc =
+        await _db.collection('wallets').doc(schedule.walletId).get();
+    if (!walletDoc.exists) {
+      throw Exception('Ví được chọn không tồn tại.');
+    }
+    final wallet = Wallet.fromMap(walletDoc.data()!, walletDoc.id);
+    if (!wallet.isActive) {
+      throw Exception('Không thể tạo lịch giao dịch với ví đã bị ẩn.');
+    }
+
+    if (schedule.type == 'expense' && schedule.categoryId.isNotEmpty) {
+      final catDoc =
+          await _db.collection('categories').doc(schedule.categoryId).get();
+      if (!catDoc.exists) {
+        throw Exception('Danh mục được chọn không tồn tại.');
+      }
+    }
+
+    final ref =
+        await _db.collection('recurringTransactions').add(schedule.toMap());
+    return ref.id;
+  }
+
+  Stream<List<RecurringTransactionSchedule>> streamRecurringTransactions(
+      String userId) {
+    return _db
+        .collection('recurringTransactions')
+        .where('userId', isEqualTo: userId)
+        .snapshots()
+        .map((snap) {
+      final list = snap.docs
+          .map((d) => RecurringTransactionSchedule.fromMap(d.data(), d.id))
+          .toList();
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return list;
+    });
+  }
+
+  Future<void> updateRecurringTransaction(
+      String scheduleId, Map<String, dynamic> data) {
+    data.remove('userId'); // Bảo vệ userId không bị thay đổi
+    data['updatedAt'] = DateTime.now().toIso8601String();
+    return _db.collection('recurringTransactions').doc(scheduleId).update(data);
+  }
+
+  Future<void> setRecurringTransactionActive(String scheduleId, bool isActive) {
+    return _db.collection('recurringTransactions').doc(scheduleId).update({
+      'isActive': isActive,
+      'updatedAt': DateTime.now().toIso8601String(),
+    });
+  }
+
+  Future<void> deleteRecurringTransaction(String scheduleId) {
+    // Chỉ xóa schedule, không xóa lịch sử giao dịch đã tạo trước đó
+    return _db.collection('recurringTransactions').doc(scheduleId).delete();
+  }
+
+  Future<Map<String, dynamic>> processDueRecurringTransactions(
+    String userId, {
+    DateTime? referenceDate,
+  }) async {
+    final now = referenceDate ?? DateTime.now();
+    final recService = RecurringTransactionService();
+
+    final querySnap = await _db
+        .collection('recurringTransactions')
+        .where('userId', isEqualTo: userId)
+        .where('isActive', isEqualTo: true)
+        .get();
+
+    final schedules = querySnap.docs
+        .map((d) => RecurringTransactionSchedule.fromMap(d.data(), d.id))
+        .toList();
+
+    int processedCount = 0;
+    int skippedCount = 0;
+    final List<String> failedSchedules = [];
+
+    for (final schedule in schedules) {
+      final dueDates = recService.dueOccurrences(
+        schedule: schedule,
+        referenceDate: now,
+      );
+
+      if (dueDates.isEmpty) continue;
+
+      bool stopSchedule = false;
+
+      for (final occurrenceDate in dueDates) {
+        if (stopSchedule) break;
+
+        final occurrenceKey =
+            RecurringTransactionService.getOccurrenceKey(occurrenceDate);
+        final deterministicTxId =
+            RecurringTransactionService.buildTransactionId(
+                schedule.scheduleId, occurrenceDate);
+
+        final txRef = _db.collection('transactions').doc(deterministicTxId);
+        final walletRef = _db.collection('wallets').doc(schedule.walletId);
+        final scheduleRef =
+            _db.collection('recurringTransactions').doc(schedule.scheduleId);
+
+        bool transactionAlreadyExists = false;
+        bool insufficientBalance = false;
+        bool walletUnavailable = false;
+
+        await _db.runTransaction((txn) async {
+          final txSnap = await txn.get(txRef);
+          if (txSnap.exists) {
+            transactionAlreadyExists = true;
+            return;
+          }
+
+          final walletSnap = await txn.get(walletRef);
+          if (!walletSnap.exists) {
+            walletUnavailable = true;
+            return;
+          }
+
+          final wallet = Wallet.fromMap(
+              walletSnap.data() as Map<String, dynamic>, walletSnap.id);
+          if (!wallet.isActive) {
+            walletUnavailable = true;
+            return;
+          }
+
+          if (schedule.type == 'expense' && wallet.balance < schedule.amount) {
+            insufficientBalance = true;
+            return;
+          }
+
+          // Tạo AppTransaction doc
+          final appTx = AppTransaction(
+            transactionId: deterministicTxId,
+            userId: userId,
+            walletId: schedule.walletId,
+            categoryId: schedule.categoryId,
+            amount: schedule.amount,
+            type: schedule.type,
+            note: schedule.note != null && schedule.note!.isNotEmpty
+                ? schedule.note
+                : 'Giao dịch định kỳ',
+            date: occurrenceDate,
+            recurringScheduleId: schedule.scheduleId,
+            recurringOccurrenceKey: occurrenceKey,
+          );
+
+          txn.set(txRef, appTx.toMap());
+
+          final delta =
+              schedule.type == 'income' ? schedule.amount : -schedule.amount;
+          txn.update(walletRef, {
+            'balance': FieldValue.increment(delta),
+          });
+
+          // Tính nextDueDate cho kỳ tiếp theo
+          final nextDueDate = recService.nextOccurrenceAfter(
+            occurrenceDate,
+            schedule.frequency,
+            schedule.startDate,
+          );
+
+          txn.update(scheduleRef, {
+            'nextDueDate': nextDueDate.toIso8601String(),
+            'lastProcessedKey': occurrenceKey,
+            'updatedAt': DateTime.now().toIso8601String(),
+          });
+        });
+
+        if (transactionAlreadyExists) {
+          skippedCount++;
+        } else if (walletUnavailable) {
+          failedSchedules.add(
+              'Ví cho khoản "${schedule.note ?? 'Giao dịch định kỳ'}" không khả dụng.');
+          stopSchedule = true;
+        } else if (insufficientBalance) {
+          failedSchedules.add(
+              'Ví không đủ số dư để ghi nhận khoản "${schedule.note ?? 'Giao dịch định kỳ'}" (${schedule.amount.round()}đ).');
+          stopSchedule = true;
+        } else {
+          processedCount++;
+        }
+      }
+    }
+
+    return {
+      'processedCount': processedCount,
+      'skippedCount': skippedCount,
+      'failedSchedules': failedSchedules,
+    };
   }
 }

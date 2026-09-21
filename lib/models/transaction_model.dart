@@ -10,11 +10,14 @@ class AppTransaction {
   final double amount;
   final String type; // income | expense | transfer
   final String? toWalletId; // Chỉ có giá trị khi type == 'transfer' (VÍ ĐÍCH)
-  final String? goalId; // MỚI — chỉ dùng khi type == 'goal_deposit' hoặc 'goal_withdraw'
+  final String?
+      goalId; // MỚI — chỉ dùng khi type == 'goal_deposit' hoặc 'goal_withdraw'
   final String? note;
   final String? image; // Path/URL ảnh hóa đơn
   final String? location;
   final DateTime date;
+  final String? recurringScheduleId; // MỚI — ID lịch giao dịch định kỳ (nếu có)
+  final String? recurringOccurrenceKey; // MỚI — Khóa kỳ hạn, VD "2026-09-30"
 
   AppTransaction({
     required this.transactionId,
@@ -29,6 +32,8 @@ class AppTransaction {
     this.image,
     this.location,
     required this.date,
+    this.recurringScheduleId,
+    this.recurringOccurrenceKey,
   });
 
   factory AppTransaction.fromMap(Map<String, dynamic> map, String id) {
@@ -45,6 +50,8 @@ class AppTransaction {
       image: map['image'],
       location: map['location'],
       date: map['date'] != null ? DateTime.parse(map['date']) : DateTime.now(),
+      recurringScheduleId: map['recurringScheduleId'],
+      recurringOccurrenceKey: map['recurringOccurrenceKey'],
     );
   }
 
@@ -61,6 +68,8 @@ class AppTransaction {
       'image': image,
       'location': location,
       'date': date.toIso8601String(),
+      'recurringScheduleId': recurringScheduleId,
+      'recurringOccurrenceKey': recurringOccurrenceKey,
     };
   }
 }

@@ -1,21 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
+import '../../models/financial_forecast_result.dart';
 import '../../models/financial_issue.dart';
 import '../../models/transaction_model.dart';
 import '../../models/category_model.dart';
+import '../../models/budget_model.dart';
+import '../../models/wallet_model.dart';
 import '../../models/user_model.dart';
-import '../../models/trend_result.dart';
+import '../../models/recurring_transaction_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/ai_service.dart';
 import '../../services/financial_analytics_service.dart';
+import '../../services/financial_forecast_service.dart';
 import '../../services/theme_controller.dart';
 import '../../utils/constants.dart';
 import '../../utils/formatters.dart';
 import '../../widgets/weekly_heatmap_card.dart';
-import '../../widgets/trend_chart_card.dart';
-import '../../widgets/app_snackbar.dart';
 
-/// 18. AI Insight — Phân tích có căn cứ + AI giải thích theo yêu cầu
+/// ============================================================
+/// AI FINANCIAL INSIGHTS SCREEN
+/// 1. Điểm sức khỏe tài chính
+/// 2. Dự báo số dư cuối tháng
+/// 3. Cảnh báo ngân sách
+/// 4. Chi tiêu bất thường
+/// 5. Đề xuất AI từ Gemini (gated)
+/// ============================================================
 class AiInsightScreen extends StatefulWidget {
   const AiInsightScreen({super.key});
 
@@ -23,47 +33,22 @@ class AiInsightScreen extends StatefulWidget {
   State<AiInsightScreen> createState() => _AiInsightScreenState();
 }
 
-class _CategoryCut {
-  final String categoryName;
-  final double currentDailyAvg;
-  final double targetDailyAvg;
-
-  _CategoryCut({
-    required this.categoryName,
-    required this.currentDailyAvg,
-    required this.targetDailyAvg,
-  });
-}
-
 class _AiInsightScreenState extends State<AiInsightScreen> {
   final _aiService = AiService();
   final _firestoreService = FirestoreService();
   final _analyticsService = FinancialAnalyticsService();
+  final _forecastService = FinancialForecastService();
 
   bool _isLoading = true;
   String? _errorMessage;
 
-  int _healthScore = 100;
-  List<FinancialIssue> _issues = [];
-  List<_CategoryCut> _topCuts = [];
+  FinancialInsightSummary? _forecastSummary;
   Map<String, List<int>> _weeklyHeatmap = {};
-  List<double> _monthlySpendingForTrend = [];
 
-  // Local session state for UI actions
-  final Set<String> _dismissedKeys = {};
-  final Map<String, String> _aiExplanations = {};
-  final Map<String, bool> _aiLoadingMap = {};
-
-  // Lazy load state for 6-month trend
-  bool _isLoadingTrend = false;
-  bool _hasLoadedTrend = false;
-  TrendResult? _trendResult;
-
-  // Lazy load state for Overview AI
-  bool _isLoadingOverview = false;
-  bool _hasLoadedOverview = false;
-  String? _spendingAnalysis;
-  String? _monthEndPrediction;
+  // Gemini AI state
+  bool _isLoadingAiExplanation = false;
+  String? _aiExplanation;
+  String? _aiErrorMessage;
 
   @override
   void initState() {
@@ -71,7 +56,7 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
     _loadInsights();
   }
 
-  /// Dart thuần — Nhanh, không cần chờ Gemini AI
+  /// Tải dữ liệu 4 tháng qua Future.wait và tính toán Dart thuần
   Future<void> _loadInsights() async {
     setState(() {
       _isLoading = true;
@@ -80,83 +65,99 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
 
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final now = DateTime.now();
+    final monthStr = DateFormat('MM/yyyy').format(now);
+
     final monthStart = DateTime(now.year, now.month, 1);
+    final monthEnd = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+
+    final m1Start = DateTime(now.year, now.month - 1, 1);
+    final m1End = DateTime(now.year, now.month, 0, 23, 59, 59);
+
+    final m2Start = DateTime(now.year, now.month - 2, 1);
+    final m2End = DateTime(now.year, now.month - 1, 0, 23, 59, 59);
+
+    final m3Start = DateTime(now.year, now.month - 3, 1);
+    final m3End = DateTime(now.year, now.month - 2, 0, 23, 59, 59);
+
     final last30Days = now.subtract(const Duration(days: 30));
-    final lastMonthStart = DateTime(now.year, now.month - 1, 1);
-    final lastMonthEnd = DateTime(now.year, now.month, 0, 23, 59, 59);
-    final sixMonthsAgo = DateTime(now.year, now.month - 5, 1);
 
     try {
       final results = await Future.wait<dynamic>([
-        _firestoreService.streamTransactions(uid, from: last30Days).first,
-        _firestoreService.streamCategories(uid).first,
-        _firestoreService.streamTransactions(uid, from: monthStart).first,
-        _firestoreService.streamTransactions(uid, from: lastMonthStart, to: lastMonthEnd).first,
-        _firestoreService.getUserProfile(uid),
-        _firestoreService.streamTransactions(uid, from: sixMonthsAgo).first,
+        _firestoreService.streamWallets(uid).first, // 0: List<Wallet>
+        _firestoreService.streamCategories(uid).first, // 1: List<Category>
+        _firestoreService
+            .streamBudgets(uid, month: monthStr)
+            .first, // 2: List<Budget>
+        _firestoreService
+            .streamTransactions(uid, from: monthStart, to: monthEnd)
+            .first, // 3: Current month Tx
+        _firestoreService
+            .streamTransactions(uid, from: m1Start, to: m1End)
+            .first, // 4: Month -1 Tx
+        _firestoreService
+            .streamTransactions(uid, from: m2Start, to: m2End)
+            .first, // 5: Month -2 Tx
+        _firestoreService
+            .streamTransactions(uid, from: m3Start, to: m3End)
+            .first, // 6: Month -3 Tx
+        _firestoreService.getUserProfile(uid), // 7: AppUser?
+        _firestoreService
+            .streamTransactions(uid, from: last30Days)
+            .first, // 8: Last 30 days Tx for heatmap
+        _firestoreService
+            .streamRecurringTransactions(uid)
+            .first, // 9: Recurring schedules
       ]);
 
-      final transactions = results[0] as List<AppTransaction>;
+      final wallets = results[0] as List<Wallet>;
       final categories = results[1] as List<Category>;
-      final monthTransactions = results[2] as List<AppTransaction>;
-      final lastMonthTransactions = results[3] as List<AppTransaction>;
-      final userProfile = results[4] as AppUser?;
-      final trendTransactions = results[5] as List<AppTransaction>;
+      final currentBudgets = results[2] as List<Budget>;
+      final currentMonthTx = results[3] as List<AppTransaction>;
+      final m1Tx = results[4] as List<AppTransaction>;
+      final m2Tx = results[5] as List<AppTransaction>;
+      final m3Tx = results[6] as List<AppTransaction>;
+      final userProfile = results[7] as AppUser?;
+      final last30DaysTx = results[8] as List<AppTransaction>;
+      final recurringSchedules =
+          results[9] as List<RecurringTransactionSchedule>;
+
       final monthlyIncome = userProfile?.monthlyIncome ?? 0;
 
-      // --- Financial Analytics Layer (Dart thuần, KHÔNG gọi AI) ---
+      // 1. Phân tích vấn đề bằng Dart thuần
       final issues = _analyticsService.detectIssues(
-        currentMonthTx: monthTransactions,
-        lastMonthTx: lastMonthTransactions,
+        currentMonthTx: currentMonthTx,
+        lastMonthTx: m1Tx,
         categories: categories,
         monthlyIncome: monthlyIncome,
       );
-      final healthScore = _analyticsService.calculateHealthScore(issues);
-      final heatmap = _analyticsService.computeWeeklyHeatmap(transactions, categories);
 
-      // Top cuts (Cơ hội tiết kiệm)
-      final Map<String, double> totals = {};
-      for (final tx in transactions.where((t) => t.type == 'expense')) {
-        final cat = categories.where((c) => c.categoryId == tx.categoryId).firstOrNull;
-        final name = cat?.name ?? 'Khác';
-        totals[name] = (totals[name] ?? 0) + tx.amount;
-      }
-      final sortedCats = totals.entries.toList()
-        ..sort((a, b) => b.value.compareTo(a.value));
-      final topCuts = sortedCats.take(3).map((e) {
-        final dailyAvg = e.value / 30;
-        return _CategoryCut(
-          categoryName: e.key,
-          currentDailyAvg: dailyAvg,
-          targetDailyAvg: dailyAvg * 0.75,
-        );
-      }).toList();
+      // 2. Dự báo dòng tiền, ngân sách & anomaly bằng Dart thuần
+      final summary = _forecastService.generateSummary(
+        activeWallets: wallets,
+        currentMonthBudgets: currentBudgets,
+        categories: categories,
+        currentMonthTx: currentMonthTx,
+        preceding3MonthsTx: [m3Tx, m2Tx, m1Tx],
+        monthlyIncome: monthlyIncome,
+        issues: issues,
+        recurringSchedules: recurringSchedules,
+        refDate: now,
+      );
 
-      // Dữ liệu 6 tháng chuẩn bị cho Trend chart
-      final List<double> monthlySpending = [];
-      for (int i = 5; i >= 0; i--) {
-        final month = DateTime(now.year, now.month - i, 1);
-        final monthEnd = DateTime(month.year, month.month + 1, 0);
-        final monthTotal = trendTransactions
-            .where((t) =>
-                t.type == 'expense' &&
-                t.date.isAfter(month.subtract(const Duration(days: 1))) &&
-                t.date.isBefore(monthEnd.add(const Duration(days: 1))))
-            .fold<double>(0, (a, t) => a + t.amount);
-        monthlySpending.add(monthTotal);
-      }
+      final heatmap =
+          _analyticsService.computeWeeklyHeatmap(last30DaysTx, categories);
 
       if (!mounted) return;
       setState(() {
-        _healthScore = healthScore;
-        _issues = issues;
+        _forecastSummary = summary;
         _weeklyHeatmap = heatmap;
-        _topCuts = topCuts;
-        _monthlySpendingForTrend = monthlySpending;
         _isLoading = false;
       });
+
+      // Lần đầu tải dữ liệu thành công -> Gọi Gemini diễn giải AI
+      _fetchAiExplanation(summary);
     } catch (e, stackTrace) {
-      debugPrint('AI Insight Data Load error: $e');
+      debugPrint('AI Financial Insights Data Load error: $e');
       debugPrintStack(stackTrace: stackTrace);
       if (!mounted) return;
       setState(() {
@@ -167,138 +168,31 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
     }
   }
 
-  /// Lazy-load giải thích cho 1 vấn đề cụ thể
-  Future<void> _explainIssue(FinancialIssue issue) async {
-    final key = issue.title;
-    setState(() => _aiLoadingMap[key] = true);
+  /// Gọi Gemini diễn giải số liệu (gated: chỉ gọi khi được trigger)
+  Future<void> _fetchAiExplanation(FinancialInsightSummary summary) async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingAiExplanation = true;
+      _aiErrorMessage = null;
+    });
+
     try {
-      final explanation = await _aiService.explainSingleIssue(issue);
+      final explanation = await _aiService.explainFinancialInsights(summary);
       if (!mounted) return;
       setState(() {
-        _aiExplanations[key] = explanation;
-        _aiLoadingMap[key] = false;
+        _aiExplanation = explanation;
+        _isLoadingAiExplanation = false;
       });
     } catch (e) {
+      debugPrint('Gemini explanation error: $e');
       if (!mounted) return;
       final msg = AiService.isNoNetworkException(e)
           ? 'Không có kết nối mạng.'
-          : 'Không thể tải đề xuất từ AI lúc này.';
+          : 'Chưa thể tải phần giải thích AI. Các chỉ số tài chính bên trên vẫn được tính từ dữ liệu của bạn.';
       setState(() {
-        _aiExplanations[key] = msg;
-        _aiLoadingMap[key] = false;
+        _aiErrorMessage = msg;
+        _isLoadingAiExplanation = false;
       });
-    }
-  }
-
-  /// Lazy-load giải thích cho 1 cơ hội tiết kiệm cụ thể
-  Future<void> _explainCut(_CategoryCut cut) async {
-    final key = 'cut_${cut.categoryName}';
-    setState(() => _aiLoadingMap[key] = true);
-    try {
-      final explanation = await _aiService.suggestSpendingCuts(
-        categoryName: cut.categoryName,
-        currentDailyAvg: cut.currentDailyAvg,
-        targetDailyAvg: cut.targetDailyAvg,
-      );
-      if (!mounted) return;
-      setState(() {
-        _aiExplanations[key] = explanation;
-        _aiLoadingMap[key] = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      final msg = AiService.isNoNetworkException(e)
-          ? 'Không có kết nối mạng.'
-          : 'Không thể tải đề xuất từ AI lúc này.';
-      setState(() {
-        _aiExplanations[key] = msg;
-        _aiLoadingMap[key] = false;
-      });
-    }
-  }
-
-  /// Lazy-load phân tích xu hướng 6 tháng từ Gemini
-  Future<void> _loadTrendLazy() async {
-    if (_hasLoadedTrend || _isLoadingTrend) return;
-    setState(() => _isLoadingTrend = true);
-    try {
-      final result = await _aiService.analyzeTrend(
-        monthlySpending: _monthlySpendingForTrend,
-      );
-      if (!mounted) return;
-      setState(() {
-        _trendResult = result;
-        _isLoadingTrend = false;
-        _hasLoadedTrend = true;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      if (AiService.isNoNetworkException(e)) {
-        AppSnackbar.show(context, 'Không có kết nối mạng. Vui lòng thử lại.', isError: true);
-      }
-      setState(() {
-        _isLoadingTrend = false;
-      });
-    }
-  }
-
-  /// Lazy-load nhận định tổng quan từ Gemini
-  Future<void> _loadOverviewLazy() async {
-    if (_hasLoadedOverview || _isLoadingOverview) return;
-    setState(() => _isLoadingOverview = true);
-
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final now = DateTime.now();
-    final monthStart = DateTime(now.year, now.month, 1);
-    final last30Days = now.subtract(const Duration(days: 30));
-    final daysInMonth = DateTime(now.year, now.month + 1, 0).day;
-
-    try {
-      final transactions =
-          await _firestoreService.streamTransactions(uid, from: last30Days).first;
-      final categories = await _firestoreService.streamCategories(uid).first;
-      final monthTransactions =
-          await _firestoreService.streamTransactions(uid, from: monthStart).first;
-
-      final spentSoFar = monthTransactions
-          .where((t) => t.type == 'expense')
-          .fold<double>(0, (a, t) => a + t.amount);
-
-      String analysis = 'Không thể tải phân tích chi tiêu lúc này.';
-      String prediction = 'Không thể tải dự đoán chi tiêu lúc này.';
-
-      await Future.wait([
-        _aiService.analyzeSpendingHabits(
-          transactions: transactions,
-          categories: categories,
-        ).then((res) => analysis = res).catchError((err) {
-          analysis = AiService.isNoNetworkException(err)
-              ? 'Không có kết nối mạng.'
-              : 'Không thể tải phân tích chi tiêu lúc này.';
-          return analysis;
-        }),
-        _aiService.predictMonthEnd(
-          spentSoFar: spentSoFar,
-          dayOfMonth: now.day,
-          totalDaysInMonth: daysInMonth,
-        ).then((res) => prediction = res).catchError((err) {
-          prediction = AiService.isNoNetworkException(err)
-              ? 'Không có kết nối mạng.'
-              : 'Không thể tải dự đoán chi tiêu lúc này.';
-          return prediction;
-        }),
-      ]);
-
-      if (!mounted) return;
-      setState(() {
-        _spendingAnalysis = analysis;
-        _monthEndPrediction = prediction;
-        _isLoadingOverview = false;
-        _hasLoadedOverview = true;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isLoadingOverview = false);
     }
   }
 
@@ -318,17 +212,18 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
                     color: AppColors.aiAccent.withOpacity(0.12),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.auto_awesome, color: AppColors.aiAccent, size: 18),
+                  child: const Icon(Icons.auto_awesome,
+                      color: AppColors.aiAccent, size: 18),
                 ),
                 const SizedBox(width: 8),
-                const Text('AI Insight'),
+                const Text('AI Financial Insights'),
               ],
             ),
             actions: [
               if (!_isLoading)
                 IconButton(
                   icon: const Icon(Icons.refresh_rounded),
-                  tooltip: 'Làm mới',
+                  tooltip: 'Làm mới phân tích',
                   onPressed: _loadInsights,
                 ),
             ],
@@ -347,31 +242,37 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
           children: [
             const CircularProgressIndicator(color: AppColors.aiAccent),
             const SizedBox(height: 16),
-            Text('Đang tải dữ liệu phân tích...',
-                style: TextStyle(color: AppColors.textSecondary)),
+            Text(
+              'Đang tính toán dự báo & phân tích tài chính...',
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
           ],
         ),
       );
     }
 
-    if (_errorMessage != null) {
+    if (_errorMessage != null || _forecastSummary == null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.error_outline, color: AppColors.expense, size: 48),
+              const Icon(Icons.error_outline,
+                  color: AppColors.expense, size: 48),
               const SizedBox(height: 12),
-              Text(_errorMessage!,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.textSecondary)),
+              Text(
+                _errorMessage ?? 'Không có dữ liệu phân tích.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.textSecondary),
+              ),
               const SizedBox(height: 20),
               FilledButton.icon(
                 onPressed: _loadInsights,
                 icon: const Icon(Icons.refresh),
                 label: const Text('Thử lại'),
-                style: FilledButton.styleFrom(backgroundColor: AppColors.aiAccent),
+                style:
+                    FilledButton.styleFrom(backgroundColor: AppColors.aiAccent),
               ),
             ],
           ),
@@ -379,142 +280,59 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
       );
     }
 
-    final activeIssues = _issues.where((i) => !_dismissedKeys.contains(i.title)).toList();
-    final activeCuts = _topCuts.where((c) => !_dismissedKeys.contains('cut_${c.categoryName}')).toList();
+    final summary = _forecastSummary!;
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         // 1. Điểm sức khỏe tài chính
-        _buildHealthScoreCard(_healthScore),
+        _buildHealthScoreSection(summary),
         const SizedBox(height: 16),
 
-        // 2. Vấn đề & Cơ hội (Danh sách thẻ gộp)
-        _buildIssuesAndOpportunitiesSection(activeIssues, activeCuts),
+        // 2. Dự báo số dư cuối tháng
+        _buildMonthEndForecastSection(summary.monthEndForecast),
         const SizedBox(height: 16),
 
-        // 3. Tần suất chi tiêu theo tuần (Heatmap)
+        // 3. Cảnh báo vượt ngân sách
+        _buildBudgetForecastSection(summary.budgetForecasts),
+        const SizedBox(height: 16),
+
+        // 4. Chi tiêu bất thường
+        _buildSpendingAnomalySection(summary.anomalies),
+        const SizedBox(height: 16),
+
+        // 5. Đề xuất AI từ Gemini
+        _buildAiExplanationSection(summary),
+        const SizedBox(height: 16),
+
+        // 6. Heatmap tần suất chi tiêu theo tuần
         WeeklyHeatmapCard(heatmapData: _weeklyHeatmap),
-        const SizedBox(height: 16),
-
-        // 4. Xu hướng chi tiêu 6 tháng (Lazy-load expansion)
-        _buildTrendSection(),
-        const SizedBox(height: 16),
-
-        // 5. Nhận định tổng quan từ AI (Lazy-load expansion)
-        _buildOverviewSection(),
         const SizedBox(height: 24),
       ],
     );
   }
 
   // ============================================================
-  // 1. HEALTH SCORE CARD
+  // 1. ĐIỂM SỨC KHỎE TÀI CHÍNH CARD
   // ============================================================
-  Widget _buildHealthScoreCard(int score) {
+  Widget _buildHealthScoreSection(FinancialInsightSummary summary) {
+    final score = summary.healthScore;
     final Color scoreColor;
-    final String scoreLabel;
     final IconData scoreIcon;
-    if (score >= 70) {
+
+    if (score >= 80) {
       scoreColor = AppColors.income;
-      scoreLabel = 'Tốt';
       scoreIcon = Icons.sentiment_very_satisfied;
+    } else if (score >= 60) {
+      scoreColor = AppColors.primary;
+      scoreIcon = Icons.sentiment_satisfied;
     } else if (score >= 40) {
       scoreColor = AppColors.warning;
-      scoreLabel = 'Cần chú ý';
       scoreIcon = Icons.sentiment_neutral;
     } else {
       scoreColor = AppColors.expense;
-      scoreLabel = 'Cần cải thiện';
       scoreIcon = Icons.sentiment_very_dissatisfied;
     }
-
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [scoreColor.withOpacity(0.12), scoreColor.withOpacity(0.04)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: scoreColor.withOpacity(0.25)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: scoreColor.withOpacity(0.15),
-                shape: BoxShape.circle,
-                border: Border.all(color: scoreColor, width: 3),
-              ),
-              child: Center(
-                child: Text(
-                  '$score',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: scoreColor,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Điểm sức khỏe tài chính',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Icon(scoreIcon, size: 18, color: scoreColor),
-                      const SizedBox(width: 4),
-                      Text(
-                        scoreLabel,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: scoreColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: score / 100,
-                      minHeight: 6,
-                      backgroundColor: scoreColor.withOpacity(0.15),
-                      valueColor: AlwaysStoppedAnimation<Color>(scoreColor),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // 2. VẤN ĐỀ & CƠ HỘI SECTION
-  // ============================================================
-  Widget _buildIssuesAndOpportunitiesSection(
-      List<FinancialIssue> issues, List<_CategoryCut> cuts) {
-    final totalItems = issues.length + cuts.length;
 
     return Container(
       decoration: BoxDecoration(
@@ -525,7 +343,154 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
             color: Colors.black.withOpacity(0.06),
             blurRadius: 8,
             offset: const Offset(0, 2),
-          )
+          ),
+        ],
+        border: Border.all(color: scoreColor.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(18),
+            child: Row(
+              children: [
+                Container(
+                  width: 68,
+                  height: 68,
+                  decoration: BoxDecoration(
+                    color: scoreColor.withOpacity(0.12),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: scoreColor, width: 3),
+                  ),
+                  child: Center(
+                    child: Text(
+                      '$score',
+                      style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                        color: scoreColor,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Điểm sức khỏe tài chính',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(scoreIcon, size: 18, color: scoreColor),
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: scoreColor.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              summary.healthRating,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: scoreColor,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: score / 100,
+                          minHeight: 6,
+                          backgroundColor: scoreColor.withOpacity(0.15),
+                          valueColor: AlwaysStoppedAnimation<Color>(scoreColor),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (summary.deductions.isNotEmpty) ...[
+            const Divider(height: 1),
+            Theme(
+              data:
+                  Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                dense: true,
+                title: Text(
+                  'Chi tiết lý do chấm điểm (${summary.deductions.length} khoản trừ)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                children: summary.deductions.map((d) {
+                  return Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.remove_circle_outline,
+                            size: 14, color: AppColors.expense),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            d.reason,
+                            style: TextStyle(
+                                fontSize: 12, color: AppColors.textPrimary),
+                          ),
+                        ),
+                        Text(
+                          '-${d.points}đ',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.expense,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // 2. DỰ BÁO SỐ DƯ CUỐI THÁNG CARD
+  // ============================================================
+  Widget _buildMonthEndForecastSection(MonthEndForecast forecast) {
+    final isNegative = forecast.projectedEndBalance < 0;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
         ],
       ),
       padding: const EdgeInsets.all(16),
@@ -537,30 +502,263 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: AppColors.warning.withOpacity(0.1),
+                  color: AppColors.primary.withOpacity(0.1),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.bolt_rounded,
+                child: const Icon(Icons.account_balance_wallet_outlined,
+                    color: AppColors.primary, size: 20),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Dự báo số dư cuối tháng',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
+          if (!forecast.hasEnoughData)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline,
+                      color: AppColors.primary, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Chưa đủ dữ liệu chi tiêu tháng này để dự báo.',
+                      style:
+                          TextStyle(fontSize: 13, color: AppColors.textPrimary),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else ...[
+            // Projected Balance Summary Highlight
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: (isNegative ? AppColors.expense : AppColors.income)
+                    .withOpacity(0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: (isNegative ? AppColors.expense : AppColors.income)
+                      .withOpacity(0.25),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Số dư dự kiến cuối tháng',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.textSecondary),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${AppFormatters.number(forecast.projectedEndBalance)}đ',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color:
+                              isNegative ? AppColors.expense : AppColors.income,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: (isNegative ? AppColors.expense : AppColors.income)
+                          .withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          isNegative
+                              ? Icons.warning_amber_rounded
+                              : Icons.trending_flat,
+                          size: 16,
+                          color:
+                              isNegative ? AppColors.expense : AppColors.income,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          isNegative ? 'Nguy cơ âm ví' : 'Ổn định',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: isNegative
+                                ? AppColors.expense
+                                : AppColors.income,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Key Metrics Table
+            _buildMetricRow('Tổng số dư hiện tại',
+                AppFormatters.number(forecast.currentTotalBalance)),
+            _buildMetricRow('Chi tiêu từ đầu tháng',
+                AppFormatters.number(forecast.monthToDateExpense)),
+            _buildMetricRow(
+                'Trung bình chi linh hoạt/ngày',
+                AppFormatters.number(
+                    forecast.averageDailyDiscretionaryExpense)),
+            if (forecast.plannedRemainingIncome > 0)
+              _buildMetricRow('Thu nhập định kỳ sắp tới',
+                  '+${AppFormatters.number(forecast.plannedRemainingIncome)}'),
+            if (forecast.plannedRemainingExpense > 0)
+              _buildMetricRow('Chi định kỳ/Hóa đơn sắp tới',
+                  '-${AppFormatters.number(forecast.plannedRemainingExpense)}'),
+            _buildMetricRow(
+                'Số ngày còn lại', '${forecast.remainingDays} ngày'),
+            _buildMetricRow('Chi phí dự kiến còn lại',
+                AppFormatters.number(forecast.projectedRemainingExpense)),
+
+            const SizedBox(height: 8),
+
+            // Assumptions & Data Section
+            Theme(
+              data:
+                  Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                dense: true,
+                tilePadding: EdgeInsets.zero,
+                title: Text(
+                  'Dữ liệu & Giả định',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primary,
+                  ),
+                ),
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '• Số ngày đã qua: ${forecast.elapsedDays}/${forecast.totalDaysInMonth} ngày',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.textSecondary),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '• Giả định: Dự báo này giả định không có khoản thu mới và mức chi tiêu giữ nguyên như từ đầu tháng.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontStyle: FontStyle.italic,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetricRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          Text('$valueđ',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary)),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // 3. CẢNH BÁO VƯỢT NGÂN SÁCH SECTION
+  // ============================================================
+  Widget _buildBudgetForecastSection(List<BudgetForecast> forecasts) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withOpacity(0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.pie_chart_outline_rounded,
                     color: AppColors.warning, size: 20),
               ),
               const SizedBox(width: 10),
               const Expanded(
-                child: Text('Vấn đề & Cơ hội',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                child: Text(
+                  'Cảnh báo vượt ngân sách',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
               ),
-              if (totalItems > 0)
+              if (forecasts.isNotEmpty)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
+                    color: AppColors.warning.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    '$totalItems',
+                    '${forecasts.where((f) => f.status != BudgetForecastStatus.safe).length}/${forecasts.length}',
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
-                      color: AppColors.primary,
+                      color: AppColors.warning,
                     ),
                   ),
                 ),
@@ -569,120 +767,104 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
           const SizedBox(height: 12),
           const Divider(height: 1),
           const SizedBox(height: 12),
-
-          if (totalItems == 0)
+          if (forecasts.isEmpty)
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: AppColors.income.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(10),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.check_circle, color: AppColors.income, size: 24),
-                  const SizedBox(width: 12),
+                  const Icon(Icons.check_circle_outline,
+                      color: AppColors.income, size: 20),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Tình hình tài chính an toàn. Chưa phát hiện vấn đề đáng chú ý nào trong tháng này!',
-                      style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+                      'Chưa thiết lập ngân sách nào cho tháng này.',
+                      style:
+                          TextStyle(fontSize: 13, color: AppColors.textPrimary),
                     ),
                   ),
                 ],
               ),
             )
-          else ...[
-            ...issues.map((issue) => _buildIssueCard(issue)),
-            ...cuts.map((cut) => _buildCutOpportunityCard(cut)),
-          ],
+          else
+            ...forecasts.map((b) => _buildBudgetForecastCard(b)),
         ],
       ),
     );
   }
 
-  Widget _buildIssueCard(FinancialIssue issue) {
-    final key = issue.title;
-    final isCritical = issue.severity == IssueSeverity.critical;
-    final severityColor = isCritical ? AppColors.expense : AppColors.warning;
+  Widget _buildBudgetForecastCard(BudgetForecast budget) {
+    Color statusColor;
+    String statusLabel;
+    IconData statusIcon;
 
-    IconData catIcon;
-    switch (issue.category) {
-      case IssueCategory.spike:
-        catIcon = Icons.trending_up_rounded;
+    switch (budget.status) {
+      case BudgetForecastStatus.exceeded:
+        statusColor = AppColors.expense;
+        statusLabel = 'Đã vượt';
+        statusIcon = Icons.cancel_outlined;
         break;
-      case IssueCategory.budgetShare:
-        catIcon = Icons.pie_chart_outline_rounded;
+      case BudgetForecastStatus.atRisk:
+        statusColor = Colors.deepOrange;
+        statusLabel = 'Có nguy cơ';
+        statusIcon = Icons.warning_amber_rounded;
         break;
-      case IssueCategory.lowSaving:
-        catIcon = Icons.account_balance_wallet_outlined;
+      case BudgetForecastStatus.warning:
+        statusColor = AppColors.warning;
+        statusLabel = 'Cảnh báo';
+        statusIcon = Icons.error_outline;
+        break;
+      case BudgetForecastStatus.safe:
+        statusColor = AppColors.income;
+        statusLabel = 'An toàn';
+        statusIcon = Icons.check_circle_outline;
         break;
     }
 
-    final isLoadingAi = _aiLoadingMap[key] ?? false;
-    final explanation = _aiExplanations[key];
+    final percentDisplay = (budget.percentUsed * 100).round();
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: severityColor.withOpacity(0.04),
+        color: statusColor.withOpacity(0.04),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: severityColor.withOpacity(0.2)),
+        border: Border.all(color: statusColor.withOpacity(0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: severityColor.withOpacity(0.12),
-                  shape: BoxShape.circle,
+              Text(
+                budget.categoryName,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                  color: AppColors.textPrimary,
                 ),
-                child: Icon(catIcon, size: 18, color: severityColor),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            issue.title,
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                              color: AppColors.textPrimary,
-                            ),
-                          ),
-                        ),
-                        // Badge Tin cậy (Dart tính)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: severityColor.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            '${issue.confidenceScore.round()}% Tin cậy',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: severityColor,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
+                    Icon(statusIcon, size: 13, color: statusColor),
+                    const SizedBox(width: 4),
                     Text(
-                      issue.description,
+                      statusLabel,
                       style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: statusColor,
                       ),
                     ),
                   ],
@@ -690,242 +872,54 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          // Action Buttons: AI Explain & Dismiss
+          const SizedBox(height: 6),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              InkWell(
-                onTap: isLoadingAi ? null : () => _explainIssue(issue),
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppColors.aiAccent.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (isLoadingAi)
-                        const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors.aiAccent,
-                          ),
-                        )
-                      else
-                        const Icon(Icons.auto_awesome, size: 14, color: AppColors.aiAccent),
-                      const SizedBox(width: 6),
-                      Text(
-                        explanation != null ? 'Cập nhật giải thích' : 'Xem giải thích từ AI',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.aiAccent,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close, size: 18, color: Colors.grey),
-                tooltip: 'Bỏ qua',
-                constraints: const BoxConstraints(),
-                padding: const EdgeInsets.all(4),
-                onPressed: () {
-                  setState(() => _dismissedKeys.add(key));
-                },
+              Text(
+                'Đã chi: ${AppFormatters.number(budget.spent)}đ / ${AppFormatters.number(budget.limit)}đ ($percentDisplay%)',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
               ),
             ],
           ),
-
-          // Inline AI Explanation
-          if (explanation != null) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: AppColors.aiAccent.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.aiAccent.withOpacity(0.2)),
-              ),
-              child: Text(
-                explanation,
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.5,
-                  color: AppColors.textPrimary,
-                ),
-              ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: (budget.percentUsed).clamp(0.0, 1.0),
+              minHeight: 6,
+              backgroundColor: statusColor.withOpacity(0.15),
+              valueColor: AlwaysStoppedAnimation<Color>(statusColor),
             ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCutOpportunityCard(_CategoryCut cut) {
-    final key = 'cut_${cut.categoryName}';
-    final monthSavings = (cut.currentDailyAvg - cut.targetDailyAvg) * 30;
-    final isLoadingAi = _aiLoadingMap[key] ?? false;
-    final explanation = _aiExplanations[key];
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.income.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.income.withOpacity(0.25)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: AppColors.income.withOpacity(0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.lightbulb_outline_rounded,
-                    size: 18, color: AppColors.income),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Cơ hội tiết kiệm: ${cut.categoryName}',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                              color: AppColors.textPrimary,
-                            ),
-                          ),
-                        ),
-                        // Badge Tin cậy cố định 85% cho cơ hội tiết kiệm
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: AppColors.income.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Text(
-                            '85% Tin cậy',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.income,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${AppFormatters.number(cut.currentDailyAvg.round().toDouble())}đ/ngày → '
-                      '${AppFormatters.number(cut.targetDailyAvg.round().toDouble())}đ/ngày '
-                      '(tiết kiệm ~${AppFormatters.number(monthSavings.round().toDouble())}đ/tháng)',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              InkWell(
-                onTap: isLoadingAi ? null : () => _explainCut(cut),
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppColors.aiAccent.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (isLoadingAi)
-                        const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors.aiAccent,
-                          ),
-                        )
-                      else
-                        const Icon(Icons.auto_awesome, size: 14, color: AppColors.aiAccent),
-                      const SizedBox(width: 6),
-                      Text(
-                        explanation != null ? 'Cập nhật gợi ý' : 'Xem gợi ý từ AI',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.aiAccent,
-                        ),
-                      ),
-                    ],
-                  ),
+              Text(
+                'Tốc độ chi: ${AppFormatters.number(budget.dailyPace)}đ/ngày',
+                style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+              ),
+              if (budget.estimatedExceededDate != null &&
+                  budget.status == BudgetForecastStatus.atRisk)
+                Text(
+                  'Dự kiến vượt ngày ${DateFormat('dd/MM').format(budget.estimatedExceededDate!)}',
+                  style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.deepOrange),
                 ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close, size: 18, color: Colors.grey),
-                tooltip: 'Bỏ qua',
-                constraints: const BoxConstraints(),
-                padding: const EdgeInsets.all(4),
-                onPressed: () {
-                  setState(() => _dismissedKeys.add(key));
-                },
-              ),
             ],
           ),
-          if (explanation != null) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: AppColors.aiAccent.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.aiAccent.withOpacity(0.2)),
-              ),
-              child: Text(
-                explanation,
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.5,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-            ),
-          ],
         ],
       ),
     );
   }
 
   // ============================================================
-  // 4. XU HƯỚNG CHI TIÊU 6 THÁNG (LAZY LOAD)
+  // 4. CHI TIÊU BẤT THƯỜNG SECTION
   // ============================================================
-  Widget _buildTrendSection() {
+  Widget _buildSpendingAnomalySection(List<SpendingAnomaly> anomalies) {
     return Container(
       decoration: BoxDecoration(
         color: AppColors.card,
@@ -935,51 +929,155 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
             color: Colors.black.withOpacity(0.06),
             blurRadius: 8,
             offset: const Offset(0, 2),
-          )
+          ),
         ],
       ),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          title: const Row(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Icon(Icons.show_chart_rounded, color: AppColors.primary, size: 20),
-              SizedBox(width: 10),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.expense.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.bolt_rounded,
+                    color: AppColors.expense, size: 20),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Chi tiêu bất thường',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+              ),
+              if (anomalies.isNotEmpty)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppColors.expense.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${anomalies.length}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.expense,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
+          if (anomalies.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.income.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle_outline,
+                      color: AppColors.income, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Không phát hiện danh mục nào chi tiêu bất thường so với 3 tháng trước.',
+                      style:
+                          TextStyle(fontSize: 13, color: AppColors.textPrimary),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            ...anomalies.map((a) => _buildAnomalyCard(a)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAnomalyCard(SpendingAnomaly anomaly) {
+    final isCritical = anomaly.severity == IssueSeverity.critical;
+    final color = isCritical ? AppColors.expense : AppColors.warning;
+    final percentOver = ((anomaly.excessRatio * 100) - 100).round();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
               Text(
-                'Xu hướng chi tiêu 6 tháng',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                anomaly.categoryName,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  'Vượt +$percentOver%',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                ),
               ),
             ],
           ),
-          onExpansionChanged: (expanded) {
-            if (expanded) {
-              _loadTrendLazy();
-            }
-          },
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: _isLoadingTrend
-                  ? const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Center(
-                        child: CircularProgressIndicator(color: AppColors.primary),
-                      ),
-                    )
-                  : _trendResult != null
-                      ? TrendChartCard(trendResult: _trendResult!)
-                      : const Text('Không thể tải dữ liệu xu hướng 6 tháng.'),
-            ),
-          ],
-        ),
+          const SizedBox(height: 6),
+          Text(
+            'Chi hiện tại: ${AppFormatters.number(anomaly.currentSpend)}đ (Mức kỳ vọng: ${AppFormatters.number(anomaly.expectedSpendToDate)}đ)',
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Chênh lệch: +${AppFormatters.number(anomaly.excessAmount)}đ',
+                style: TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.bold, color: color),
+              ),
+              Text(
+                'Dữ liệu từ ${anomaly.monthsOfHistory} tháng trước',
+                style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
 
   // ============================================================
-  // 5. NHẬN ĐỊNH TỔNG QUAN TỪ AI (LAZY LOAD)
+  // 5. ĐỀ XUẤT AI TỪ GEMINI SECTION (Gated)
   // ============================================================
-  Widget _buildOverviewSection() {
+  Widget _buildAiExplanationSection(FinancialInsightSummary summary) {
     return Container(
       decoration: BoxDecoration(
         color: AppColors.card,
@@ -989,78 +1087,102 @@ class _AiInsightScreenState extends State<AiInsightScreen> {
             color: Colors.black.withOpacity(0.06),
             blurRadius: 8,
             offset: const Offset(0, 2),
-          )
+          ),
         ],
       ),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          title: const Row(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Icon(Icons.psychology_outlined, color: AppColors.aiAccent, size: 20),
-              SizedBox(width: 10),
-              Text(
-                'Nhận định tổng quan từ AI',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.aiAccent.withOpacity(0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.auto_awesome,
+                    color: AppColors.aiAccent, size: 20),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Phân tích & Đề xuất AI',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+              ),
+              IconButton(
+                icon: _isLoadingAiExplanation
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: AppColors.aiAccent),
+                      )
+                    : const Icon(Icons.refresh_rounded,
+                        color: AppColors.aiAccent, size: 20),
+                tooltip: 'Làm mới đề xuất AI',
+                onPressed: _isLoadingAiExplanation
+                    ? null
+                    : () => _fetchAiExplanation(summary),
               ),
             ],
           ),
-          onExpansionChanged: (expanded) {
-            if (expanded) {
-              _loadOverviewLazy();
-            }
-          },
-          children: [
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
+          if (_isLoadingAiExplanation)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: _isLoadingOverview
-                  ? const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Center(
-                        child: CircularProgressIndicator(color: AppColors.aiAccent),
-                      ),
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (_spendingAnalysis != null) ...[
-                          const Text(
-                            'Thói quen chi tiêu',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                              color: AppColors.primary,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            _spendingAnalysis!,
-                            style: TextStyle(
-                                height: 1.5, color: AppColors.textPrimary),
-                          ),
-                          const SizedBox(height: 14),
-                        ],
-                        if (_monthEndPrediction != null) ...[
-                          const Text(
-                            'Dự đoán cuối tháng',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                              color: AppColors.warning,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            _monthEndPrediction!,
-                            style: TextStyle(
-                                height: 1.5, color: AppColors.textPrimary),
-                          ),
-                        ],
-                      ],
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                child: Column(
+                  children: [
+                    const CircularProgressIndicator(color: AppColors.aiAccent),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Gemini đang phân tích chỉ số tài chính...',
+                      style: TextStyle(
+                          fontSize: 13, color: AppColors.textSecondary),
                     ),
+                  ],
+                ),
+              ),
+            )
+          else if (_aiErrorMessage != null)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.warning.withOpacity(0.2)),
+              ),
+              child: Text(
+                _aiErrorMessage!,
+                style: TextStyle(
+                    fontSize: 13, height: 1.5, color: AppColors.textPrimary),
+              ),
+            )
+          else if (_aiExplanation != null)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.aiAccent.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.aiAccent.withOpacity(0.2)),
+              ),
+              child: Text(
+                _aiExplanation!,
+                style: TextStyle(
+                    fontSize: 13, height: 1.5, color: AppColors.textPrimary),
+              ),
+            )
+          else
+            Text(
+              'Bấm "Làm mới đề xuất AI" để xem phần giải thích từ Gemini.',
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
             ),
-          ],
-        ),
+        ],
       ),
     );
   }

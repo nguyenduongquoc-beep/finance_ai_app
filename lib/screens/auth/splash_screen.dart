@@ -81,6 +81,13 @@ class _SplashScreenState extends State<SplashScreen>
             MaterialPageRoute(builder: (_) => const WalletSetupScreen()),
           );
         } else {
+          // Process due recurring transactions once after successful login/setup
+          try {
+            await FirestoreService().processDueRecurringTransactions(user.uid);
+          } catch (_) {
+            // Silently ignore network or Firestore errors during splash process
+          }
+          if (!mounted) return;
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const MainNavigation()),
           );

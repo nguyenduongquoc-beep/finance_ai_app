@@ -1,6 +1,10 @@
 import 'dart:typed_data';
 import 'dart:io';
+import 'dart:async';
 import '../../services/ai_service.dart';
+import '../../models/category_suggestion.dart';
+import '../../models/transaction_anomaly_result.dart';
+import '../../services/transaction_intelligence_service.dart';
 import 'package:flutter/foundation.dart'
     show kIsWeb, defaultTargetPlatform, debugPrint;
 import 'package:permission_handler/permission_handler.dart';
@@ -40,6 +44,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   final _firestoreService = FirestoreService();
   final _storageService = StorageService();
   final _templateService = TemplateService();
+  final _intelligenceService = TransactionIntelligenceService();
 
   String _type = 'expense';
   String? _selectedWalletId;
@@ -54,9 +59,22 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   bool _isParsing = false;
   bool _isValidating = false;
 
+  // Smart Transaction Assistant State
+  bool _isCategoryManuallySelected = false;
+  CategorySuggestion? _categorySuggestion;
+  TransactionAnomalyResult _anomalyResult = TransactionAnomalyResult.normal();
+  List<AppTransaction> _userHistory = [];
+  List<Category> _allCategories = [];
+  Timer? _debounceTimer;
+  String? _aiExplanation;
+  bool _isLoadingAiExplanation = false;
+
+
   @override
   void initState() {
     super.initState();
+    _noteController.addListener(_onNoteChanged);
+
     if (widget.transactionToEdit != null) {
       final tx = widget.transactionToEdit!;
       if (tx.type == 'goal_deposit' || tx.type == 'goal_withdraw') {
@@ -74,6 +92,9 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       _amountController.text = AppFormatters.number(tx.amount);
       _selectedWalletId = tx.walletId.isNotEmpty ? tx.walletId : null;
       _selectedCategoryId = tx.categoryId.isNotEmpty ? tx.categoryId : null;
+      if (tx.categoryId.isNotEmpty) {
+        _isCategoryManuallySelected = true;
+      }
       _selectedDate = tx.date;
       _noteController.text = tx.note ?? '';
       _locationController.text = tx.location ?? '';
@@ -81,15 +102,125 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
 
       WidgetsBinding.instance.addPostFrameCallback((_) => _runValidation());
     }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null && uid.isNotEmpty) {
+        final history = await _firestoreService.getUserTransactions(
+          uid,
+          from: DateTime.now().subtract(const Duration(days: 90)),
+        );
+        if (mounted) {
+          setState(() {
+            _userHistory = history;
+          });
+          _runIntelligenceCheck();
+        }
+      }
+    });
   }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
+    _noteController.removeListener(_onNoteChanged);
     _amountController.dispose();
     _noteController.dispose();
     _locationController.dispose();
     super.dispose();
   }
+
+  void _onNoteChanged() {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        _runIntelligenceCheck();
+      }
+    });
+  }
+
+  void _runIntelligenceCheck({String? ocrMerchant}) {
+    if (!mounted) return;
+
+    final note = _noteController.text.trim();
+    final suggestion = _intelligenceService.suggestCategory(
+      note: note,
+      ocrMerchant: ocrMerchant,
+      categories: _allCategories,
+      transactionType: _type,
+      userHistory: _userHistory,
+    );
+
+    String? newCategoryId = _selectedCategoryId;
+    // Tự động chọn danh mục NẾU chưa chọn danh mục thủ công VÀ confidence >= 80%
+    if (!_isCategoryManuallySelected &&
+        suggestion.confidence >= 80 &&
+        suggestion.categoryId.isNotEmpty) {
+      newCategoryId = suggestion.categoryId;
+    }
+
+    final amount = AppFormatters.parseCurrencyInput(_amountController.text);
+    final selectedCat = _allCategories.firstWhere(
+      (c) => c.categoryId == (newCategoryId ?? ''),
+      orElse: () => Category(
+        categoryId: newCategoryId ?? '',
+        userId: '',
+        name: '',
+        type: _type,
+        icon: '',
+        color: 0,
+      ),
+    );
+
+    final anomaly = _intelligenceService.detectAnomaly(
+      amount: amount,
+      categoryId: newCategoryId ?? '',
+      categoryName: selectedCat.name,
+      transactionType: _type,
+      userHistory: _userHistory,
+    );
+
+    setState(() {
+      _categorySuggestion = suggestion;
+      _selectedCategoryId = newCategoryId;
+      _anomalyResult = anomaly;
+      _aiExplanation = null;
+    });
+  }
+
+  Future<void> _explainAnomalyWithAi() async {
+    if (!_anomalyResult.isAnomalous || _isLoadingAiExplanation) return;
+    setState(() => _isLoadingAiExplanation = true);
+    final ai = AiService();
+    try {
+      final explanation = await ai.explainTransactionAnomaly(
+        categoryName: _anomalyResult.categoryName,
+        currentAmount: _anomalyResult.currentAmount,
+        expectedAmount: _anomalyResult.expectedAmount,
+        ratio: _anomalyResult.ratio,
+        historySampleSize: _anomalyResult.historySampleSize,
+      );
+      if (mounted) {
+        setState(() {
+          _aiExplanation = explanation;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        final msg = AiService.isNoNetworkException(e)
+            ? 'Không có kết nối mạng để gọi AI giải thích.'
+            : 'Không thể tải giải thích AI lúc này. Bạn vẫn có thể xem số liệu cảnh báo từ hệ thống ở trên.';
+        setState(() {
+          _aiExplanation = msg;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingAiExplanation = false);
+      }
+    }
+  }
+
 
   Future<void> _pickImage() async {
     final ImageSource source = ImageSource.camera;
@@ -156,8 +287,13 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
           : 'Lỗi khi trích xuất hoá đơn: $e';
       AppSnackbar.show(context, msg, isError: true);
     }
-    setState(() => _isParsing = false);
-    await _runValidation();
+    if (mounted) {
+      setState(() => _isParsing = false);
+      _runIntelligenceCheck(
+        ocrMerchant: (_noteController.text.isNotEmpty) ? _noteController.text : null,
+      );
+      await _runValidation();
+    }
   }
 
   Future<void> _pickDate() async {
@@ -178,9 +314,11 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     );
     if (result != null) {
       setState(() => _amountController.text = result);
+      _runIntelligenceCheck();
       await _runValidation();
     }
   }
+
 
   Future<void> _runValidation() async {
     setState(() => _isValidating = true);
@@ -425,12 +563,17 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                                               tmpl.categoryId.isNotEmpty
                                                   ? tmpl.categoryId
                                                   : null;
+                                          if (tmpl.categoryId.isNotEmpty) {
+                                            _isCategoryManuallySelected = true;
+                                          }
                                           _noteController.text = tmpl.note;
                                           _locationController.text =
                                               tmpl.location;
                                         });
+                                        _runIntelligenceCheck();
                                         await _runValidation();
                                       },
+
                                     ),
                                   ))
                               .toList(),
@@ -561,6 +704,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                     if (snap.hasError)
                       return StreamErrorWidget(error: snap.error.toString());
                     final allCategories = snap.data ?? [];
+                    _allCategories = allCategories;
                     final categories =
                         allCategories.where((c) => c.type == _type).toList();
 
@@ -600,12 +744,72 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                               value: c.categoryId, child: Text(c.name)))
                           .toList(),
                       onChanged: (v) async {
-                        setState(() => _selectedCategoryId = v);
+                        setState(() {
+                          _selectedCategoryId = v;
+                          _isCategoryManuallySelected = true;
+                        });
+                        _runIntelligenceCheck();
                         await _runValidation();
                       },
                     );
                   },
                 ),
+                if (_categorySuggestion != null &&
+                    _categorySuggestion!.confidence > 0 &&
+                    _categorySuggestion!.categoryId.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  InkWell(
+                    onTap: () async {
+                      setState(() {
+                        _selectedCategoryId = _categorySuggestion!.categoryId;
+                        _isCategoryManuallySelected = true;
+                      });
+                      _runIntelligenceCheck();
+                      await _runValidation();
+                    },
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                            color: AppColors.primary.withOpacity(0.25)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.auto_awesome,
+                              color: AppColors.primary, size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Gợi ý: ${_categorySuggestion!.categoryName} (${_categorySuggestion!.confidence}% tin cậy) — ${_categorySuggestion!.reason}',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          if (_selectedCategoryId !=
+                              _categorySuggestion!.categoryId) ...[
+                            const SizedBox(width: 4),
+                            const Text(
+                              'Áp dụng',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.bold,
+                                decoration: TextDecoration.underline,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
                 if (_budgetStatus == BudgetValidationStatus.nearLimit)
                   Container(
                     margin: const EdgeInsets.only(top: 8),
@@ -662,6 +866,140 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                       ],
                     ),
                   ),
+                if (_anomalyResult.isAnomalous) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _anomalyResult.severity == 'critical'
+                          ? AppColors.expense.withOpacity(0.1)
+                          : AppColors.warning.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _anomalyResult.severity == 'critical'
+                            ? AppColors.expense.withOpacity(0.4)
+                            : AppColors.warning.withOpacity(0.4),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              _anomalyResult.severity == 'critical'
+                                  ? Icons.error_outline_rounded
+                                  : Icons.warning_amber_rounded,
+                              color: _anomalyResult.severity == 'critical'
+                                  ? AppColors.expense
+                                  : AppColors.warning,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Cảnh báo khoản chi bất thường (${_anomalyResult.severity == 'critical' ? 'Mức độ nghiêm trọng' : 'Mức độ cảnh báo'})',
+                                style: TextStyle(
+                                  color: _anomalyResult.severity == 'critical'
+                                      ? AppColors.expense
+                                      : AppColors.warning,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _anomalyResult.reason,
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 13,
+                            height: 1.3,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Bạn vẫn có thể lưu nếu đây là giao dịch đúng.',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.primary,
+                              side: BorderSide(
+                                  color: AppColors.primary.withOpacity(0.5)),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 6),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            onPressed: _isLoadingAiExplanation
+                                ? null
+                                : _explainAnomalyWithAi,
+                            icon: _isLoadingAiExplanation
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2))
+                                : const Icon(Icons.auto_awesome, size: 14),
+                            label: Text(
+                              _isLoadingAiExplanation
+                                  ? 'Đang phân tích...'
+                                  : 'Giải thích cảnh báo',
+                              style: const TextStyle(
+                                  fontSize: 12, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
+                        if (_aiExplanation != null) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: AppColors.card,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                  color: AppColors.primary.withOpacity(0.2)),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Icon(Icons.psychology_outlined,
+                                    color: AppColors.primary, size: 18),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _aiExplanation!,
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      color: AppColors.textPrimary,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+
+                      ],
+                    ),
+                  ),
+                ],
+
                 const SizedBox(height: 16),
                 TextField(
                   controller: _noteController,
@@ -923,6 +1261,10 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
             // Màn Thêm mới: giữ nguyên hành vi cũ (ticket 007)
             _type = type;
             _selectedCategoryId = null;
+            _isCategoryManuallySelected = false;
+            _categorySuggestion = null;
+            _anomalyResult = TransactionAnomalyResult.normal();
+            _aiExplanation = null;
             _selectedWalletId = null;
             _amountController.clear();
             _noteController.clear();
@@ -939,10 +1281,16 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
             // Màn Sửa: chỉ đổi loại + reset danh mục, giữ nguyên toàn bộ dữ liệu còn lại
             _type = type;
             _selectedCategoryId = null;
+            _isCategoryManuallySelected = false;
+            _categorySuggestion = null;
+            _anomalyResult = TransactionAnomalyResult.normal();
+            _aiExplanation = null;
           }
         });
+        _runIntelligenceCheck();
         await _runValidation();
       },
+
       style: ElevatedButton.styleFrom(
         backgroundColor: selected ? color : AppColors.card,
         foregroundColor: selected ? Colors.white : AppColors.textSecondary,

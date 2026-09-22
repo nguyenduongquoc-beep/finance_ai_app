@@ -441,6 +441,36 @@ Hãy đóng vai trò cố vấn tài chính:
     return response.text ?? 'Không thể tải phần giải thích AI lúc này.';
   }
 
+  /// Giải thích khoản chi bất thường dựa trên số liệu Dart đã tính sẵn.
+  /// Tuyệt đối KHÔNG gửi UID, email, note đầy đủ, vị trí hoặc ảnh.
+  Future<String> explainTransactionAnomaly({
+    required String categoryName,
+    required double currentAmount,
+    required double expectedAmount,
+    required double ratio,
+    required int historySampleSize,
+  }) async {
+    final ratioFormatted = ratio.toStringAsFixed(1).replaceAll('.0', '');
+    final prompt = '''
+Bạn là trợ lý tài chính cá nhân. Hệ thống đã phát hiện một khoản chi bất thường dựa trên thuật toán Dart xác định:
+- Danh mục: $categoryName
+- Số tiền chi giao dịch này: ${currentAmount.round()} VNĐ
+- Mức chi trung vị thông thường (90 ngày qua, $historySampleSize mẫu): ${expectedAmount.round()} VNĐ
+- Tỷ lệ chênh lệch: khoảng $ratioFormatted lần mức thông thường.
+
+Hãy viết giải thích ngắn gọn bằng tiếng Việt, TỐI ĐA 2 CÂU:
+1. Nhận xét về lý do vì sao hệ thống đưa ra cảnh báo này dựa trên số liệu.
+2. Lời khuyên nhẹ nhàng để người dùng xem xét kiểm tra lại giao dịch (vẫn khẳng định người dùng có toàn quyền lưu nếu đây là khoản chi hợp lý).
+
+LƯU Ý: Tuyệt đối không kết luận gian lận, không tư vấn đầu tư, không tự tính toán lại hoặc bịa đặt số liệu mới ngoài các con số trên.
+''';
+
+    final response = await _generateWithFallback([Content.text(prompt)]);
+    return response.text ??
+        'Khoản chi này cao hơn khoảng $ratioFormatted lần mức chi thông thường của bạn cho $categoryName.';
+  }
+
+
   String _stripMarkdownCodeFence(String text) {
     final trimmed = text.trim();
     final fenceRegex = RegExp(r'^```(?:json)?\s*([\s\S]*?)\s*```$');

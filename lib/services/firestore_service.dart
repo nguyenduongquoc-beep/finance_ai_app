@@ -348,6 +348,32 @@ class FirestoreService {
     });
   }
 
+  /// Lấy danh sách giao dịch của user trong khoảng thời gian (dùng cho Smart Transaction Assistant)
+  Future<List<AppTransaction>> getUserTransactions(
+    String userId, {
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    Query<Map<String, dynamic>> query =
+        _db.collection('transactions').where('userId', isEqualTo: userId);
+
+    if (from != null) {
+      query =
+          query.where('date', isGreaterThanOrEqualTo: from.toIso8601String());
+    }
+    if (to != null) {
+      query = query.where('date', isLessThanOrEqualTo: to.toIso8601String());
+    }
+
+    final snap = await query.get();
+    final list = snap.docs
+        .map((d) => AppTransaction.fromMap(d.data(), d.id))
+        .toList();
+    list.sort((a, b) => b.date.compareTo(a.date));
+    return list;
+  }
+
+
   Future<void> updateTransaction(String txId, Map<String, dynamic> data) {
     return _db.collection('transactions').doc(txId).update(data);
   }

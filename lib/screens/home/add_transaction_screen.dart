@@ -26,6 +26,7 @@ import '../../widgets/stream_error_widget.dart';
 import '../../widgets/custom_numpad.dart';
 import '../../widgets/quick_template_chip.dart';
 import '../../widgets/app_snackbar.dart';
+import '../../utils/category_utils.dart';
 
 class AddTransactionScreen extends StatefulWidget {
   final AppTransaction? transactionToEdit;
@@ -139,17 +140,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     });
   }
 
-  bool _areCategoryListsEqual(List<Category> list1, List<Category> list2) {
-    if (list1.length != list2.length) return false;
-    for (int i = 0; i < list1.length; i++) {
-      if (list1[i].categoryId != list2[i].categoryId ||
-          list1[i].name != list2[i].name ||
-          list1[i].type != list2[i].type) {
-        return false;
-      }
-    }
-    return true;
-  }
 
   void _runIntelligenceCheck({String? ocrMerchant}) {
 
@@ -720,7 +710,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                     if (snap.hasError)
                       return StreamErrorWidget(error: snap.error.toString());
                     final allCategories = snap.data ?? [];
-                    if (!_areCategoryListsEqual(_allCategories, allCategories)) {
+                    if (!areCategoryListsEqual(_allCategories, allCategories)) {
                       _allCategories = allCategories;
                       WidgetsBinding.instance.addPostFrameCallback((_) {
                         if (mounted) _runIntelligenceCheck();

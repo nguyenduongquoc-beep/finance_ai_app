@@ -337,5 +337,44 @@ void main() {
       expect(result1.expectedAmount, equals(120000));
       expect(result1.ratio, equals(2.5));
     });
+
+    // 11. Loại trừ giao dịch đang sửa (excludeTransactionId) khỏi mẫu median lịch sử
+    test('11. Excludes transaction matching excludeTransactionId from anomaly history sample', () {
+      final now = DateTime.now();
+      final history = List.generate(
+        5,
+        (i) => AppTransaction(
+          transactionId: i == 0 ? 'editing_tx_100' : 'tx_$i',
+          userId: 'user_1',
+          walletId: 'w1',
+          categoryId: 'cat_food',
+          amount: 100000,
+          type: 'expense',
+          date: now.subtract(Duration(days: i + 1)),
+        ),
+      );
+
+      // Khi chưa loại trừ: có 5 mẫu -> báo anomaly
+      final withSelf = intelligenceService.detectAnomaly(
+        amount: 300000,
+        categoryId: 'cat_food',
+        categoryName: 'Ăn uống',
+        transactionType: 'expense',
+        userHistory: history,
+      );
+      expect(withSelf.isAnomalous, isTrue);
+
+      // Khi loại trừ giao dịch đang sửa: còn 4 mẫu (< 5) -> không báo anomaly
+      final withoutSelf = intelligenceService.detectAnomaly(
+        amount: 300000,
+        categoryId: 'cat_food',
+        categoryName: 'Ăn uống',
+        transactionType: 'expense',
+        userHistory: history,
+        excludeTransactionId: 'editing_tx_100',
+      );
+      expect(withoutSelf.isAnomalous, isFalse);
+    });
   });
 }
+

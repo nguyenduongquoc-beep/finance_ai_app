@@ -329,6 +329,7 @@ class TransactionIntelligenceService {
     required String transactionType,
     required List<AppTransaction> userHistory,
     DateTime? currentDate,
+    String? excludeTransactionId,
   }) {
     // Chỉ áp dụng cho expense
     if (transactionType != 'expense' || categoryId.isEmpty || amount <= 0) {
@@ -340,6 +341,7 @@ class TransactionIntelligenceService {
 
     // Lọc lịch sử 90 ngày cùng danh mục
     // Loại trừ giao dịch định kỳ có recurringScheduleId để không làm sai mức chi thông thường
+    // Loại trừ giao dịch đang sửa (excludeTransactionId) nếu có
     final filteredHistory = userHistory.where((tx) {
       if (tx.type != 'expense') return false;
       if (tx.categoryId != categoryId) return false;
@@ -347,8 +349,14 @@ class TransactionIntelligenceService {
       if (tx.recurringScheduleId != null && tx.recurringScheduleId!.isNotEmpty) {
         return false;
       }
+      if (excludeTransactionId != null &&
+          excludeTransactionId.isNotEmpty &&
+          tx.transactionId == excludeTransactionId) {
+        return false;
+      }
       return true;
     }).toList();
+
 
     // Cần ít nhất 5 giao dịch lịch sử
     if (filteredHistory.length < 5) {

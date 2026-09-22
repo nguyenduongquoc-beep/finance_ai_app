@@ -139,7 +139,21 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     });
   }
 
+  bool _areCategoryListsEqual(List<Category> list1, List<Category> list2) {
+    if (list1.length != list2.length) return false;
+    for (int i = 0; i < list1.length; i++) {
+      if (list1[i].categoryId != list2[i].categoryId ||
+          list1[i].name != list2[i].name ||
+          list1[i].type != list2[i].type) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   void _runIntelligenceCheck({String? ocrMerchant}) {
+
+
     if (!mounted) return;
 
     final note = _noteController.text.trim();
@@ -178,7 +192,9 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       categoryName: selectedCat.name,
       transactionType: _type,
       userHistory: _userHistory,
+      excludeTransactionId: widget.transactionToEdit?.transactionId,
     );
+
 
     setState(() {
       _categorySuggestion = suggestion;
@@ -704,9 +720,15 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                     if (snap.hasError)
                       return StreamErrorWidget(error: snap.error.toString());
                     final allCategories = snap.data ?? [];
-                    _allCategories = allCategories;
+                    if (!_areCategoryListsEqual(_allCategories, allCategories)) {
+                      _allCategories = allCategories;
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) _runIntelligenceCheck();
+                      });
+                    }
                     final categories =
                         allCategories.where((c) => c.type == _type).toList();
+
 
                     if (snap.hasData &&
                         _selectedCategoryId != null &&

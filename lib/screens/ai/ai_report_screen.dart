@@ -5,6 +5,8 @@ import '../../models/transaction_model.dart';
 import '../../models/category_model.dart';
 import '../../models/budget_model.dart';
 import '../../models/saving_goal_model.dart';
+import '../../models/wallet_model.dart';
+import '../../services/financial_export_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/theme_controller.dart';
 import '../../utils/constants.dart';
@@ -37,8 +39,11 @@ class AiReportScreen extends StatefulWidget {
 
 class _AiReportScreenState extends State<AiReportScreen> {
   final _firestoreService = FirestoreService();
+  final _exportService = FinancialExportService();
 
   bool _isLoading = true;
+  bool _isExportingPdf = false;
+  bool _isExportingCsv = false;
   String? _errorMessage;
 
   double _totalExpense = 0;
@@ -840,45 +845,191 @@ class _AiReportScreenState extends State<AiReportScreen> {
     );
   }
 
+  Future<void> _exportPdfReport() async {
+    if (_isExportingPdf) return;
+    setState(() => _isExportingPdf = true);
+
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final now = DateTime.now();
+    final monthStart = DateTime(now.year, now.month, 1);
+    final monthEnd = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+
+    final lastMonthStart = DateTime(now.year, now.month - 1, 1);
+    final lastMonthEnd = DateTime(now.year, now.month, 0, 23, 59, 59);
+
+    final twoMonthsAgoStart = DateTime(now.year, now.month - 2, 1);
+    final twoMonthsAgoEnd = DateTime(now.year, now.month - 1, 0, 23, 59, 59);
+
+    try {
+      final results = await Future.wait<dynamic>([
+        _firestoreService.streamTransactions(uid, from: monthStart, to: monthEnd).first,
+        _firestoreService.streamWallets(uid).first,
+        _firestoreService.streamCategories(uid).first,
+        _firestoreService.streamBudgets(uid, month: AppFormatters.month(now)).first,
+        _firestoreService.streamSavingGoals(uid).first,
+        _firestoreService.streamTransactions(uid, from: lastMonthStart, to: lastMonthEnd).first,
+        _firestoreService.streamTransactions(uid, from: twoMonthsAgoStart, to: twoMonthsAgoEnd).first,
+      ]);
+
+      final currentTx = results[0] as List<AppTransaction>;
+      final wallets = results[1] as List<Wallet>;
+      final categories = results[2] as List<Category>;
+      final budgets = results[3] as List<Budget>;
+      final savingGoals = results[4] as List<SavingGoal>;
+      final lastMonthTx = results[5] as List<AppTransaction>;
+      final twoMonthsAgoTx = results[6] as List<AppTransaction>;
+
+      final reportData = _exportService.buildReportData(
+        currentPeriodTx: currentTx,
+        wallets: wallets,
+        categories: categories,
+        budgets: budgets,
+        savingGoals: savingGoals,
+        periodLabel: 'Tháng ${now.month}/${now.year}',
+        isCurrentMonth: true,
+        lastMonthTx: lastMonthTx,
+        preceding3MonthsTx: [twoMonthsAgoTx, lastMonthTx],
+        refDate: now,
+      );
+
+      final pdfBytes = await _exportService.generateFinancialReportPdf(data: reportData);
+      final filename = 'finance_ai_report_${now.year}-${now.month.toString().padLeft(2, '0')}';
+      final pdfFile = await _exportService.savePdfToFile(pdfBytes, filename);
+
+      if (!mounted) return;
+      AppSnackbar.show(context, 'Đã tạo báo cáo PDF');
+
+      await _exportService.shareFile(
+        pdfFile.path,
+        text: 'Báo cáo tài chính cá nhân - Tháng ${now.month}/${now.year}',
+        subject: 'Báo cáo tài chính',
+      );
+    } catch (e) {
+      debugPrint('Export PDF Error: $e');
+      if (!mounted) return;
+      AppSnackbar.show(context, 'Không thể xuất PDF: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isExportingPdf = false);
+      }
+    }
+  }
+
+  Future<void> _exportCsvReport() async {
+    if (_isExportingCsv) return;
+    setState(() => _isExportingCsv = true);
+
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final now = DateTime.now();
+    final monthStart = DateTime(now.year, now.month, 1);
+    final monthEnd = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+
+    try {
+      final results = await Future.wait<dynamic>([
+        _firestoreService.streamTransactions(uid, from: monthStart, to: monthEnd).first,
+        _firestoreService.streamCategories(uid).first,
+        _firestoreService.streamWallets(uid).first,
+        _firestoreService.streamSavingGoals(uid).first,
+      ]);
+
+      final transactions = results[0] as List<AppTransaction>;
+      final categories = results[1] as List<Category>;
+      final wallets = results[2] as List<Wallet>;
+      final savingGoals = results[3] as List<SavingGoal>;
+
+      final filename = 'finance_ai_transactions_${now.year}-${now.month.toString().padLeft(2, '0')}';
+      final csvFile = await _exportService.exportTransactionsCsv(
+        transactions: transactions,
+        categories: categories,
+        wallets: wallets,
+        savingGoals: savingGoals,
+        filenamePrefix: filename,
+      );
+
+      if (!mounted) return;
+      AppSnackbar.show(context, 'Đã xuất file CSV giao dịch');
+
+      await _exportService.shareFile(
+        csvFile.path,
+        text: 'Dữ liệu giao dịch tháng ${now.month}/${now.year}',
+        subject: 'Xuất dữ liệu CSV',
+      );
+    } catch (e) {
+      debugPrint('Export CSV Error: $e');
+      if (!mounted) return;
+      final msg = e is ExportException ? e.message : 'Không thể xuất CSV: $e';
+      AppSnackbar.show(context, msg);
+    } finally {
+      if (mounted) {
+        setState(() => _isExportingCsv = false);
+      }
+    }
+  }
+
   // ============================================================
   // 5. HÀNG NÚT ACTION CUỐI TRANG
   // ============================================================
   Widget _buildActionButtons() {
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () {
-              AppSnackbar.show(context, 'Tính năng chia sẻ đang được phát triển');
-            },
-            icon: const Icon(Icons.ios_share_rounded, size: 18),
-            label: const Text('Chia sẻ báo cáo'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.textPrimary,
-              side: BorderSide(color: Colors.grey.shade300),
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _isExportingPdf ? null : _exportPdfReport,
+                icon: const Icon(Icons.ios_share_rounded, size: 18),
+                label: const Text('Chia sẻ báo cáo'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.textPrimary,
+                  side: BorderSide(color: Colors.grey.shade300),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () {
-              AppSnackbar.show(context, 'TODO: Xuất PDF - dùng package pdf/printing');
-            },
-            icon: const Icon(Icons.download_rounded, size: 18),
-            label: const Text('Xuất file PDF'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.accentGreen,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _isExportingPdf ? null : _exportPdfReport,
+                icon: _isExportingPdf
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      )
+                    : const Icon(Icons.download_rounded, size: 18),
+                label: Text(_isExportingPdf ? 'Đang tạo...' : 'Xuất file PDF'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accentGreen,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 0,
+                ),
               ),
-              elevation: 0,
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: TextButton.icon(
+            onPressed: _isExportingCsv ? null : _exportCsvReport,
+            icon: _isExportingCsv
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.table_chart_outlined, size: 18),
+            label: Text(_isExportingCsv ? 'Đang xuất CSV...' : 'Xuất dữ liệu CSV tháng này'),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.primary,
+              padding: const EdgeInsets.symmetric(vertical: 12),
             ),
           ),
         ),
@@ -886,3 +1037,4 @@ class _AiReportScreenState extends State<AiReportScreen> {
     );
   }
 }
+

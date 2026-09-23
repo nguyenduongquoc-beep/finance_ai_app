@@ -7,6 +7,10 @@ import '../../services/firestore_service.dart';
 import '../../services/theme_controller.dart';
 import '../../utils/constants.dart';
 import '../../utils/formatters.dart';
+import '../../models/wallet_model.dart';
+import '../../models/saving_goal_model.dart';
+import '../../services/financial_export_service.dart';
+import '../../widgets/app_snackbar.dart';
 import '../../widgets/transaction_card.dart';
 import '../../widgets/stream_error_widget.dart';
 import 'transaction_detail_screen.dart';
@@ -21,8 +25,10 @@ class TransactionListScreen extends StatefulWidget {
 
 class _TransactionListScreenState extends State<TransactionListScreen> {
   final _firestoreService = FirestoreService();
+  final _exportService = FinancialExportService();
   final _searchController = TextEditingController();
   
+  bool _isExportingCsv = false;
   String _searchQuery = '';
   String _typeFilter = 'all'; // 'all' | 'expense' | 'income'
   DateTime? _selectedDate;    // ngày cụ thể được chọn (null = không lọc theo ngày)
@@ -224,6 +230,132 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
     );
   }
 
+  Future<void> _exportCsvForPeriod(String periodType) async {
+    if (_isExportingCsv) return;
+    setState(() => _isExportingCsv = true);
+
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final now = DateTime.now();
+
+    DateTime? fromDate;
+    DateTime? toDate;
+    String filenamePrefix = 'finance_ai_transactions';
+
+    if (periodType == 'current_month') {
+      fromDate = DateTime(now.year, now.month, 1);
+      toDate = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+      filenamePrefix = 'finance_ai_transactions_${now.year}-${now.month.toString().padLeft(2, '0')}';
+    } else if (periodType == 'selected_filter') {
+      if (_selectedDate != null) {
+        fromDate = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
+        toDate = fromDate.add(const Duration(days: 1)).subtract(const Duration(seconds: 1));
+        filenamePrefix = 'finance_ai_transactions_${AppFormatters.date(_selectedDate!)}';
+      } else if (_selectedMonth != null) {
+        fromDate = DateTime(_selectedMonth!.year, _selectedMonth!.month, 1);
+        toDate = DateTime(_selectedMonth!.year, _selectedMonth!.month + 1, 0, 23, 59, 59);
+        filenamePrefix = 'finance_ai_transactions_${_selectedMonth!.year}-${_selectedMonth!.month.toString().padLeft(2, '0')}';
+      }
+    }
+
+    try {
+      final results = await Future.wait<dynamic>([
+        _firestoreService.streamTransactions(uid, from: fromDate, to: toDate).first,
+        _firestoreService.streamCategories(uid).first,
+        _firestoreService.streamWallets(uid).first,
+        _firestoreService.streamSavingGoals(uid).first,
+      ]);
+
+      final txList = results[0] as List<AppTransaction>;
+      final catList = results[1] as List<Category>;
+      final walletList = results[2] as List<Wallet>;
+      final goalList = results[3] as List<SavingGoal>;
+
+      final csvFile = await _exportService.exportTransactionsCsv(
+        transactions: txList,
+        categories: catList,
+        wallets: walletList,
+        savingGoals: goalList,
+        filenamePrefix: filenamePrefix,
+      );
+
+      if (!mounted) return;
+      AppSnackbar.show(context, 'Đã xuất file CSV giao dịch');
+
+      await _exportService.shareFile(
+        csvFile.path,
+        text: 'Xuất dữ liệu giao dịch - $filenamePrefix',
+        subject: 'Dữ liệu giao dịch CSV',
+      );
+    } catch (e) {
+      debugPrint('Export CSV Exception: $e');
+      if (!mounted) return;
+      final msg = e is ExportException ? e.message : 'Không thể xuất CSV: $e';
+      AppSnackbar.show(context, msg);
+    } finally {
+      if (mounted) {
+        setState(() => _isExportingCsv = false);
+      }
+    }
+  }
+
+  void _showExportCsvMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Text(
+                  'Xuất dữ liệu CSV',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.calendar_today, color: AppColors.primary),
+                title: Text('Tháng hiện tại (Tháng ${DateTime.now().month})', style: GoogleFonts.inter()),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _exportCsvForPeriod('current_month');
+                },
+              ),
+              if (_selectedDate != null || _selectedMonth != null)
+                ListTile(
+                  leading: const Icon(Icons.filter_alt, color: AppColors.primary),
+                  title: Text(
+                    _selectedDate != null
+                        ? 'Kỳ đang lọc (${AppFormatters.date(_selectedDate!)})'
+                        : 'Kỳ đang lọc (Tháng ${_selectedMonth!.month}/${_selectedMonth!.year})',
+                    style: GoogleFonts.inter(),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _exportCsvForPeriod('selected_filter');
+                  },
+                ),
+              ListTile(
+                leading: const Icon(Icons.history, color: AppColors.primary),
+                title: Text('Tất cả lịch sử giao dịch', style: GoogleFonts.inter()),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _exportCsvForPeriod('all_history');
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+
   Widget _buildTypeTag(String label, String type) {
     final isActive = _typeFilter == type;
     return GestureDetector(
@@ -288,10 +420,22 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
             ),
             actions: [
               IconButton(
+                icon: _isExportingCsv
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(Icons.file_download_outlined, color: AppColors.textPrimary),
+                tooltip: 'Xuất CSV',
+                onPressed: _isExportingCsv ? null : () => _showExportCsvMenu(context),
+              ),
+              IconButton(
                 icon: Icon(Icons.calendar_today_outlined, color: AppColors.textPrimary),
                 onPressed: () => _showFilterOptions(context),
               ),
             ],
+
           ),
           body: Column(
             children: [

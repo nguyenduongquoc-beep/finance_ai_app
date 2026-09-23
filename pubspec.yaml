@@ -37,6 +37,11 @@ dependencies:
   percent_indicator: ^4.2.3
   path_provider: ^2.1.4
 
+  # Export & Printing
+  pdf: ^3.11.1
+  printing: ^5.13.2
+  share_plus: ^10.1.4
+
   # AI (Gemini)
   google_generative_ai: ^0.4.6
 
@@ -50,3 +55,5 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+    - assets/fonts/
+

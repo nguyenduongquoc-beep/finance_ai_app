@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' hide Category;
 import 'package:intl/intl.dart';
 import '../models/user_model.dart';
 import '../models/wallet_model.dart';
@@ -18,7 +19,10 @@ import '../utils/transaction_business_logic.dart';
 /// transactions, budgets, savingGoals, notifications
 /// ============================================================
 class FirestoreService {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseFirestore _db;
+
+  FirestoreService({FirebaseFirestore? firestore})
+      : _db = firestore ?? FirebaseFirestore.instance;
 
   // ---------------- USERS ----------------
   Future<void> createUserProfile(AppUser user) {
@@ -781,6 +785,9 @@ class FirestoreService {
     final now = referenceDate ?? DateTime.now();
     final recService = RecurringTransactionService();
 
+    debugPrint(
+        '[DebugRecurring] collection: recurringTransactions, op: read, scheduleId: all');
+
     final querySnap = await _db
         .collection('recurringTransactions')
         .where('userId', isEqualTo: userId)
@@ -796,6 +803,12 @@ class FirestoreService {
     final List<String> failedSchedules = [];
 
     for (final schedule in schedules) {
+      if (schedule.userId.isEmpty || schedule.userId != userId) {
+        failedSchedules.add(
+            'Lịch định kỳ "${schedule.scheduleId}" thiếu userId hợp lệ.');
+        continue;
+      }
+
       final dueDates = recService.dueOccurrences(
         schedule: schedule,
         referenceDate: now,
@@ -822,6 +835,12 @@ class FirestoreService {
         bool transactionAlreadyExists = false;
         bool insufficientBalance = false;
         bool walletUnavailable = false;
+        bool invalidUserData = false;
+
+        debugPrint(
+            '[DebugRecurring] collection: transactions, op: read, scheduleId: ${schedule.scheduleId}');
+        debugPrint(
+            '[DebugRecurring] collection: wallets, op: read, scheduleId: ${schedule.scheduleId}');
 
         await _db.runTransaction((txn) async {
           final txSnap = await txn.get(txRef);
@@ -836,8 +855,14 @@ class FirestoreService {
             return;
           }
 
-          final wallet = Wallet.fromMap(
-              walletSnap.data() as Map<String, dynamic>, walletSnap.id);
+          final walletData = walletSnap.data() as Map<String, dynamic>;
+          final wallet = Wallet.fromMap(walletData, walletSnap.id);
+
+          if (wallet.userId.isEmpty || wallet.userId != userId) {
+            invalidUserData = true;
+            return;
+          }
+
           if (!wallet.isActive) {
             walletUnavailable = true;
             return;
@@ -848,7 +873,6 @@ class FirestoreService {
             return;
           }
 
-          // Tạo AppTransaction doc
           final appTx = AppTransaction(
             transactionId: deterministicTxId,
             userId: userId,
@@ -864,21 +888,27 @@ class FirestoreService {
             recurringOccurrenceKey: occurrenceKey,
           );
 
+          debugPrint(
+              '[DebugRecurring] collection: transactions, op: create, scheduleId: ${schedule.scheduleId}');
           txn.set(txRef, appTx.toMap());
 
           final delta =
               schedule.type == 'income' ? schedule.amount : -schedule.amount;
+
+          debugPrint(
+              '[DebugRecurring] collection: wallets, op: update, scheduleId: ${schedule.scheduleId}');
           txn.update(walletRef, {
             'balance': FieldValue.increment(delta),
           });
 
-          // Tính nextDueDate cho kỳ tiếp theo
           final nextDueDate = recService.nextOccurrenceAfter(
             occurrenceDate,
             schedule.frequency,
             schedule.startDate,
           );
 
+          debugPrint(
+              '[DebugRecurring] collection: recurringTransactions, op: update, scheduleId: ${schedule.scheduleId}');
           txn.update(scheduleRef, {
             'nextDueDate': nextDueDate.toIso8601String(),
             'lastProcessedKey': occurrenceKey,
@@ -888,6 +918,10 @@ class FirestoreService {
 
         if (transactionAlreadyExists) {
           skippedCount++;
+        } else if (invalidUserData) {
+          failedSchedules.add(
+              'Ví cho khoản "${schedule.note ?? 'Giao dịch định kỳ'}" thiếu userId hợp lệ.');
+          stopSchedule = true;
         } else if (walletUnavailable) {
           failedSchedules.add(
               'Ví cho khoản "${schedule.note ?? 'Giao dịch định kỳ'}" không khả dụng.');

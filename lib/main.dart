@@ -6,6 +6,7 @@ import 'firebase_options.dart';
 import 'routes/app_routes.dart';
 import 'utils/constants.dart';
 import 'services/theme_controller.dart';
+import 'services/local_notification_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +15,7 @@ Future<void> main() async {
   );
   await initializeDateFormatting('vi_VN', null);
   await ThemeController.loadSavedTheme();
+  await LocalNotificationService().initialize();
   runApp(const FinanceAiApp());
 }
 
@@ -32,6 +34,7 @@ class FinanceAiApp extends StatelessWidget {
         );
 
         return MaterialApp(
+          navigatorKey: AppRoutes.navigatorKey,
           title: AppStrings.appName,
           debugShowCheckedModeBanner: false,
           themeMode: mode,

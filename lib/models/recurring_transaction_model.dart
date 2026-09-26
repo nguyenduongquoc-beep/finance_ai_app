@@ -18,6 +18,7 @@ class RecurringTransactionSchedule {
   final DateTime createdAt;
   final DateTime? updatedAt;
   final String? lastProcessedKey; // VD: "2026-09-20"
+  final int reminderDaysBefore; // 0 (Không nhắc), 1 (Trước 1 ngày), 3, 7. Mặc định: 1
 
   RecurringTransactionSchedule({
     required this.scheduleId,
@@ -34,6 +35,7 @@ class RecurringTransactionSchedule {
     required this.createdAt,
     this.updatedAt,
     this.lastProcessedKey,
+    this.reminderDaysBefore = 1,
   }) {
     validateAmount(amount);
   }
@@ -69,6 +71,9 @@ class RecurringTransactionSchedule {
       updatedAt:
           map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : null,
       lastProcessedKey: map['lastProcessedKey'],
+      reminderDaysBefore: map['reminderDaysBefore'] != null
+          ? (map['reminderDaysBefore'] as num).toInt()
+          : 1,
     );
   }
 
@@ -87,6 +92,7 @@ class RecurringTransactionSchedule {
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': (updatedAt ?? DateTime.now()).toIso8601String(),
       'lastProcessedKey': lastProcessedKey,
+      'reminderDaysBefore': reminderDaysBefore,
     };
   }
 
@@ -102,6 +108,7 @@ class RecurringTransactionSchedule {
     bool? isActive,
     DateTime? updatedAt,
     String? lastProcessedKey,
+    int? reminderDaysBefore,
   }) {
     return RecurringTransactionSchedule(
       scheduleId: scheduleId,
@@ -118,6 +125,7 @@ class RecurringTransactionSchedule {
       createdAt: createdAt,
       updatedAt: updatedAt ?? DateTime.now(),
       lastProcessedKey: lastProcessedKey ?? this.lastProcessedKey,
+      reminderDaysBefore: reminderDaysBefore ?? this.reminderDaysBefore,
     );
   }
 }

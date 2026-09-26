@@ -14,6 +14,9 @@ import '../widgets/main_navigation.dart';
 /// Định nghĩa các route đặt tên dùng chung trong app
 /// ============================================================
 class AppRoutes {
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
+
   static const String splash = '/';
   static const String onboarding = '/onboarding';
   static const String login = '/login';

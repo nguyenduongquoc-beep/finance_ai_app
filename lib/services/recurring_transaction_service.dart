@@ -114,6 +114,39 @@ class RecurringTransactionService {
     return results;
   }
 
+  /// Trả về danh sách ngày đến hạn của 1 schedule trong khoảng N ngày tới (từ today đến today + daysAhead)
+  List<DateTime> nextOccurrencesInWindow({
+    required RecurringTransactionSchedule schedule,
+    required DateTime referenceDate,
+    required int daysAhead,
+  }) {
+    if (!schedule.isActive) return [];
+
+    final results = <DateTime>[];
+    final windowStart = DateTime(
+        referenceDate.year, referenceDate.month, referenceDate.day);
+    final windowEnd = DateTime(referenceDate.year, referenceDate.month,
+        referenceDate.day + daysAhead, 23, 59, 59);
+
+    var current = schedule.nextDueDate;
+    while (current.isBefore(windowStart)) {
+      final next =
+          nextOccurrenceAfter(current, schedule.frequency, schedule.startDate);
+      if (!next.isAfter(current)) break;
+      current = next;
+    }
+
+    while (!current.isAfter(windowEnd)) {
+      results.add(current);
+      final next =
+          nextOccurrenceAfter(current, schedule.frequency, schedule.startDate);
+      if (!next.isAfter(current)) break;
+      current = next;
+    }
+
+    return results;
+  }
+
   /// Trả về các kỳ sắp đến hạn từ (referenceDate + 1 ngày) tới (referenceDate + daysAhead)
   List<UpcomingOccurrence> upcomingOccurrences({
     required List<RecurringTransactionSchedule> schedules,

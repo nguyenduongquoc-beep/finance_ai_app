@@ -42,6 +42,11 @@ dependencies:
   printing: ^5.13.2
   share_plus: ^10.1.4
 
+  # Local Notifications & Timezone
+  flutter_local_notifications: ^17.2.3
+  timezone: ^0.9.4
+  flutter_timezone: ^3.0.1
+
   # AI (Gemini)
   google_generative_ai: ^0.4.6
 

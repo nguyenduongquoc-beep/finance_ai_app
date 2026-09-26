@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../../models/recurring_transaction_model.dart';
 import '../../models/wallet_model.dart';
 import '../../models/category_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/local_notification_service.dart';
 import '../../services/recurring_transaction_service.dart';
 import '../../services/theme_controller.dart';
 import '../../utils/constants.dart';
@@ -16,7 +18,9 @@ import '../../widgets/app_snackbar.dart';
 /// Giao dịch định kỳ & Lịch hóa đơn
 /// ============================================================
 class RecurringTransactionScreen extends StatefulWidget {
-  const RecurringTransactionScreen({super.key});
+  final String? targetScheduleId;
+
+  const RecurringTransactionScreen({super.key, this.targetScheduleId});
 
   @override
   State<RecurringTransactionScreen> createState() =>
@@ -27,6 +31,7 @@ class _RecurringTransactionScreenState
     extends State<RecurringTransactionScreen> {
   final _firestoreService = FirestoreService();
   final _recService = RecurringTransactionService();
+  final _notificationService = LocalNotificationService();
 
   bool _isProcessingDue = false;
   int _selectedUpcomingDays = 30; // 7, 14, 30 ngày
@@ -34,9 +39,9 @@ class _RecurringTransactionScreenState
   @override
   void initState() {
     super.initState();
-    // Chạy kiểm tra các kỳ đến hạn duy nhất 1 lần khi mở màn hình
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _processDueTransactions(showFeedback: false);
+      _notificationService.requestPermission();
     });
   }
 
@@ -515,6 +520,19 @@ class _RecurringTransactionScreenState
                             : AppColors.textSecondary,
                       ),
                     ),
+                    if (schedule.reminderDaysBefore > 0)
+                      Row(
+                        children: [
+                          Icon(Icons.notifications_active_outlined,
+                              size: 12, color: AppColors.textSecondary),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Nhắc trước ${schedule.reminderDaysBefore} ngày',
+                            style: TextStyle(
+                                fontSize: 11, color: AppColors.textSecondary),
+                          ),
+                        ],
+                      ),
                   ],
                 ),
                 trailing: Row(
@@ -523,9 +541,25 @@ class _RecurringTransactionScreenState
                     Switch(
                       value: schedule.isActive,
                       activeColor: AppColors.primary,
-                      onChanged: (val) {
-                        _firestoreService.setRecurringTransactionActive(
+                      onChanged: (val) async {
+                        await _firestoreService.setRecurringTransactionActive(
                             schedule.scheduleId, val);
+                        if (val) {
+                          final w = wallets.firstWhere(
+                            (w) => w.walletId == schedule.walletId,
+                            orElse: () => Wallet(
+                              walletId: '', userId: '', walletName: 'Ví',
+                              balance: 0, type: 'cash', createdAt: DateTime.now(),
+                            ),
+                          );
+                          await _notificationService.scheduleRemindersForSchedule(
+                            schedule: schedule.copyWith(isActive: true),
+                            walletName: w.walletName,
+                          );
+                        } else {
+                          await _notificationService.cancelRemindersForSchedule(
+                              schedule.scheduleId);
+                        }
                       },
                     ),
                     PopupMenuButton<String>(
@@ -587,6 +621,8 @@ class _RecurringTransactionScreenState
           FilledButton(
             onPressed: () async {
               Navigator.of(context).pop();
+              await _notificationService.cancelRemindersForSchedule(
+                  schedule.scheduleId);
               await _firestoreService
                   .deleteRecurringTransaction(schedule.scheduleId);
               if (mounted) {
@@ -629,6 +665,7 @@ class _RecurringFormSheet extends StatefulWidget {
 class _RecurringFormSheetState extends State<_RecurringFormSheet> {
   final _formKey = GlobalKey<FormState>();
   final _firestoreService = FirestoreService();
+  final _notificationService = LocalNotificationService();
 
   late String _type;
   late TextEditingController _amountController;
@@ -637,6 +674,7 @@ class _RecurringFormSheetState extends State<_RecurringFormSheet> {
   String? _selectedCategoryId;
   late String _frequency;
   late DateTime _startDate;
+  late int _reminderDaysBefore;
 
   bool _isSaving = false;
 
@@ -653,6 +691,7 @@ class _RecurringFormSheetState extends State<_RecurringFormSheet> {
     _selectedCategoryId = s?.categoryId;
     _frequency = s?.frequency ?? 'monthly';
     _startDate = s?.startDate ?? DateTime.now();
+    _reminderDaysBefore = s?.reminderDaysBefore ?? 1;
   }
 
   @override
@@ -684,6 +723,18 @@ class _RecurringFormSheetState extends State<_RecurringFormSheet> {
     setState(() => _isSaving = true);
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
 
+    // Lấy tên ví để hiển thị trong notification
+    String walletName = 'Ví';
+    try {
+      final walletDoc = await FirebaseFirestore.instance
+          .collection('wallets')
+          .doc(_selectedWalletId)
+          .get();
+      if (walletDoc.exists) {
+        walletName = walletDoc.data()?['walletName'] ?? 'Ví';
+      }
+    } catch (_) {}
+
     try {
       if (widget.schedule == null) {
         // Tạo mới schedule
@@ -697,12 +748,38 @@ class _RecurringFormSheetState extends State<_RecurringFormSheet> {
           note: _noteController.text.trim(),
           frequency: _frequency,
           startDate: _startDate,
-          nextDueDate: _startDate, // Khởi tạo kỳ đầu tiên
+          nextDueDate: _startDate,
           isActive: true,
           createdAt: DateTime.now(),
+          reminderDaysBefore: _reminderDaysBefore,
         );
 
-        await _firestoreService.createRecurringTransaction(newSchedule);
+        final docId =
+            await _firestoreService.createRecurringTransaction(newSchedule);
+
+        // Lên lịch notification với scheduleId thực tế từ Firestore
+        if (_reminderDaysBefore > 0) {
+          final savedSchedule = RecurringTransactionSchedule(
+            scheduleId: docId,
+            userId: uid,
+            type: _type,
+            walletId: _selectedWalletId!,
+            categoryId: _type == 'expense' ? _selectedCategoryId! : '',
+            amount: amount,
+            note: _noteController.text.trim(),
+            frequency: _frequency,
+            startDate: _startDate,
+            nextDueDate: _startDate,
+            isActive: true,
+            createdAt: DateTime.now(),
+            reminderDaysBefore: _reminderDaysBefore,
+          );
+          await _notificationService.scheduleRemindersForSchedule(
+            schedule: savedSchedule,
+            walletName: walletName,
+          );
+        }
+
         if (!mounted) return;
         AppSnackbar.show(context, 'Đã tạo lịch định kỳ thành công!');
       } else {
@@ -716,10 +793,30 @@ class _RecurringFormSheetState extends State<_RecurringFormSheet> {
           'frequency': _frequency,
           'startDate': _startDate.toIso8601String(),
           'nextDueDate': _startDate.toIso8601String(),
+          'reminderDaysBefore': _reminderDaysBefore,
         };
 
         await _firestoreService.updateRecurringTransaction(
             widget.schedule!.scheduleId, updateData);
+
+        // Cập nhật notification
+        final updatedSchedule = widget.schedule!.copyWith(
+          type: _type,
+          walletId: _selectedWalletId,
+          categoryId: _type == 'expense' ? _selectedCategoryId : '',
+          amount: amount,
+          note: _noteController.text.trim(),
+          frequency: _frequency,
+          startDate: _startDate,
+          nextDueDate: _startDate,
+          isActive: widget.schedule!.isActive,
+          reminderDaysBefore: _reminderDaysBefore,
+        );
+        await _notificationService.scheduleRemindersForSchedule(
+          schedule: updatedSchedule,
+          walletName: walletName,
+        );
+
         if (!mounted) return;
         AppSnackbar.show(context, 'Đã cập nhật lịch định kỳ!');
       }
@@ -926,6 +1023,26 @@ class _RecurringFormSheetState extends State<_RecurringFormSheet> {
                   ),
                   child: Text(DateFormat('dd/MM/yyyy').format(_startDate)),
                 ),
+              ),
+              const SizedBox(height: 14),
+
+              // Dropdown Nhắc nhở trước hạn
+              DropdownButtonFormField<int>(
+                value: _reminderDaysBefore,
+                decoration: const InputDecoration(
+                  labelText: 'Nhắc nhở trước hạn',
+                  prefixIcon: Icon(Icons.notifications_active_outlined),
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 0, child: Text('Không nhắc')),
+                  DropdownMenuItem(value: 1, child: Text('Trước 1 ngày')),
+                  DropdownMenuItem(value: 3, child: Text('Trước 3 ngày')),
+                  DropdownMenuItem(value: 7, child: Text('Trước 7 ngày')),
+                ],
+                onChanged: (val) {
+                  if (val != null) setState(() => _reminderDaysBefore = val);
+                },
               ),
               const SizedBox(height: 20),
 

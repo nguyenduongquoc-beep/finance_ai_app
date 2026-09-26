@@ -4,6 +4,7 @@ import 'package:finance_ai_app/models/recurring_transaction_model.dart';
 import 'package:finance_ai_app/models/transaction_model.dart';
 import 'package:finance_ai_app/models/wallet_model.dart';
 import 'package:finance_ai_app/services/financial_forecast_service.dart';
+import 'package:finance_ai_app/services/firestore_service.dart';
 import 'package:finance_ai_app/services/recurring_transaction_service.dart';
 
 void main() {
@@ -528,6 +529,110 @@ void main() {
           .get();
       expect(txDoc.exists, isTrue);
       expect(txDoc.data()!['recurringScheduleId'], equals(scheduleId));
+    });
+
+    // 16. Successful processDueRecurringTransactions with valid userId and schema
+    test(
+        '16. Successful processDueRecurringTransactions creates transaction and updates wallet/schedule with valid userId',
+        () async {
+      final firestoreService = FirestoreService(firestore: fakeDb);
+      final userId = 'u_1';
+      final scheduleId = 'sch_valid';
+
+      // Seed valid wallet
+      await fakeDb.collection('wallets').doc('w_1').set({
+        'userId': userId,
+        'walletName': 'Ví Tiền Mặt',
+        'balance': 2000000.0,
+        'type': 'cash',
+        'isActive': true,
+        'createdAt': DateTime.now().toIso8601String(),
+      });
+
+      // Seed valid recurring schedule due today
+      final dueDate = DateTime(2026, 9, 20);
+      await fakeDb.collection('recurringTransactions').doc(scheduleId).set({
+        'userId': userId,
+        'type': 'expense',
+        'walletId': 'w_1',
+        'categoryId': 'cat_food',
+        'amount': 500000.0,
+        'frequency': 'monthly',
+        'startDate': dueDate.toIso8601String(),
+        'nextDueDate': dueDate.toIso8601String(),
+        'isActive': true,
+        'createdAt': DateTime.now().toIso8601String(),
+      });
+
+      final result = await firestoreService.processDueRecurringTransactions(
+        userId,
+        referenceDate: DateTime(2026, 9, 20),
+      );
+
+      expect(result['processedCount'], equals(1));
+      expect(result['failedSchedules'], isEmpty);
+
+      // Verify transaction doc created with correct userId
+      final txQuery = await fakeDb.collection('transactions').get();
+      expect(txQuery.docs.length, equals(1));
+      final txDoc = txQuery.docs.first;
+      expect(txDoc.data()['userId'], equals(userId));
+      expect(txDoc.data()['amount'], equals(500000.0));
+
+      // Verify wallet balance updated (2m - 500k = 1.5m)
+      final wDoc = await fakeDb.collection('wallets').doc('w_1').get();
+      expect(wDoc.data()!['balance'], equals(1500000.0));
+
+      // Verify schedule nextDueDate updated
+      final schDoc =
+          await fakeDb.collection('recurringTransactions').doc(scheduleId).get();
+      expect(schDoc.data()!['lastProcessedKey'], equals('2026-09-20'));
+    });
+
+    // 17. processDueRecurringTransactions fails clearly when document is missing userId
+    test(
+        '17. processDueRecurringTransactions fails clearly when wallet or schedule is missing userId',
+        () async {
+      final firestoreService = FirestoreService(firestore: fakeDb);
+      final userId = 'u_1';
+      final scheduleId = 'sch_legacy_missing_uid';
+
+      // Seed wallet MISSING userId field (legacy document)
+      await fakeDb.collection('wallets').doc('w_no_uid').set({
+        'walletName': 'Ví Cũ',
+        'balance': 2000000.0,
+        'type': 'cash',
+        'isActive': true,
+        'createdAt': DateTime.now().toIso8601String(),
+      });
+
+      // Seed schedule with valid userId pointing to legacy wallet
+      final dueDate = DateTime(2026, 9, 20);
+      await fakeDb.collection('recurringTransactions').doc(scheduleId).set({
+        'userId': userId,
+        'type': 'expense',
+        'walletId': 'w_no_uid',
+        'categoryId': 'cat_food',
+        'amount': 500000.0,
+        'frequency': 'monthly',
+        'startDate': dueDate.toIso8601String(),
+        'nextDueDate': dueDate.toIso8601String(),
+        'isActive': true,
+        'createdAt': DateTime.now().toIso8601String(),
+      });
+
+      final result = await firestoreService.processDueRecurringTransactions(
+        userId,
+        referenceDate: DateTime(2026, 9, 20),
+      );
+
+      expect(result['processedCount'], equals(0));
+      expect(result['failedSchedules'], isNotEmpty);
+      expect(result['failedSchedules'].first, contains('thiếu userId hợp lệ'));
+
+      // Verify no transaction document created
+      final txQuery = await fakeDb.collection('transactions').get();
+      expect(txQuery.docs, isEmpty);
     });
   });
 }

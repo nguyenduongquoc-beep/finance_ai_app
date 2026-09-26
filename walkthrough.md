@@ -13,10 +13,10 @@ Tài liệu này tổng hợp toàn bộ giải pháp thiết kế, kết quả 
 | **Nhắc trước hạn** | Tạo/Sửa lịch có chọn nhắc trước 1/3/7 ngày | Notification lên lịch tự động vào lúc 09:00 AM local time của ngày tương ứng trước hạn (`nextDueDate - reminderDaysBefore`). | Chưa kiểm thử thiết bị thực tế (Đã PASS Unit Test #3 & #6) |
 | **Đến hạn** | Đặt ngày đến hạn là hôm nay/ngày mai | Notification đúng ngày đến hạn được lên lịch lúc 09:00 AM local time. Nội dung rõ ràng: Số tiền, loại thu/chi, ví thực hiện. | Chưa kiểm thử thiết bị thực tế (Đã PASS Unit Test #3 & #6) |
 | **Bấm notification** | Chạm vào notification từ thanh thông báo hệ thống | App mở/chuyển đến màn hình `RecurringTransactionScreen`, tự động focus/scroll đến `targetScheduleId` tương ứng. | Chưa kiểm thử thiết bị thực tế |
-| **Sửa lịch** | Đổi ngày đến hạn hoặc thay đổi `reminderDaysBefore` | Hủy toàn bộ notification cũ của `scheduleId` đó và tạo lại danh sách notification mới chính xác. | Chưa kiểm thử thiết bị thực tế |
+| **Sửa lịch** | Đổi ngày đến hạn hoặc thay đổi `reminderDaysBefore` | Hủy toàn bộ notification cũ của `scheduleId` đó (dùng payload prefix `bill_reminder_v1:`) và tạo lại danh sách notification mới chính xác. | Chưa kiểm thử thiết bị thực tế |
 | **Tắt lịch** | Gạt Switch `isActive` sang Tắt (`false`) | Hủy toàn bộ notification đã chờ (pending) của `scheduleId` tương ứng. | Chưa kiểm thử thiết bị thực tế |
 | **Xóa lịch** | Bấm nút Xóa lịch định kỳ trong Menu | Hủy toàn bộ notification liên quan đến `scheduleId` đó khỏi hệ thống notification Android/iOS. | Chưa kiểm thử thiết bị thực tế |
-| **Mở app nhiều lần** | Mở lại màn hình nhiều lần hoặc đăng nhập lại | `syncAllReminders` chỉ hủy các notification lặp của Bill Reminder (dựa theo payload `scheduleId`) thay vì `cancelAll()`, tránh ảnh hưởng các notification khác của app. | Chưa kiểm thử thiết bị thực tế |
+| **Mở app nhiều lần** | Mở lại màn hình nhiều lần hoặc đăng nhập lại | `syncAllReminders` chỉ hủy các notification lặp của Bill Reminder (dựa theo payload `bill_reminder_v1:`) thay vì `cancelAll()`, tránh ảnh hưởng các notification khác của app. | Chưa kiểm thử thiết bị thực tế |
 | **An toàn nghiệp vụ** | Nhận hoặc chạm vào notification | Chỉ đóng vai trò nhắc nhở hiển thị. **Không** tự tạo transaction, **không** tự trừ số dư ví, **không** thay đổi Firestore data chỉ từ hành vi notification. | Chưa kiểm thử thiết bị thực tế (Đã đảm bảo qua kiến trúc code) |
 
 > **Ghi chú**: Các mục trên sẽ được cập nhật thành **PASS** sau khi thực hiện chạy trực tiếp ứng dụng trên máy thật/giả lập Android và quan sát kết quả thực tế.
@@ -26,10 +26,10 @@ Tài liệu này tổng hợp toàn bộ giải pháp thiết kế, kết quả 
 ## 2. Thông Tin Code, Commit & Diff Stat
 
 - **Branch**: `main`
-- **Commit mới nhất trên origin**: `54ad0cf3ce4727038b6a158ca57c321145cb3ba7`
-- **Trạng thái Git working tree**: Đã tích hợp hoàn chỉnh các thay đổi cục bộ cho tính năng Local Notification.
+- **Commit mới nhất đã push**: `57afcbc287e1800676dfae7ca553ccdbe868629f`
+- **Trạng thái Git working tree**: **Clean** (nothing to commit, working tree clean).
 
-### `git diff --stat`
+### `git diff --stat` (So với origin/main trước khi commit)
 
 ```text
  firestore.rules                                    |   4 +-
@@ -38,13 +38,13 @@ Tài liệu này tổng hợp toàn bộ giải pháp thiết kế, kết quả 
  lib/routes/app_routes.dart                         |   3 +
  .../management/recurring_transaction_screen.dart   | 129 ++++++++++++++++++++-
  lib/services/firestore_service.dart                |  44 ++++++-
- lib/services/local_notification_service.dart      | 376 ++++++++++++++++++++++ (New)
+ lib/services/local_notification_service.dart      | 394 ++++++++++++++++++++++ (New)
  lib/services/recurring_transaction_service.dart    |  33 ++++++
  macos/Flutter/GeneratedPluginRegistrant.swift      |   2 +
- pubspec.yaml                                       |   4 +
- test/local_notification_service_test.dart         | 175 ++++++++++++++++++++++ (New)
+ pubspec.yaml                                       |   5 +
+ test/local_notification_service_test.dart         | 242 ++++++++++++++++++++++ (New)
  test/recurring_transaction_service_test.dart       | 105 +++++++++++++++++
- 12 files changed, 889 insertions(+), 12 deletions(-)
+ 12 files changed, 972 insertions(+), 12 deletions(-)
 ```
 
 ---
@@ -56,8 +56,8 @@ Tài liệu này tổng hợp toàn bộ giải pháp thiết kế, kết quả 
 - Tất cả các tập tin liên quan đến tính năng notification (`local_notification_service.dart`, `recurring_transaction_screen.dart`, `recurring_transaction_model.dart`, `local_notification_service_test.dart`) đều biên dịch hoàn toàn sạch sẽ.
 
 ### 3.2. Automated Tests (`flutter test`)
-- **Tổng số test suite**: **87 tests** (bao gồm 6 unit tests cho Notification Service).
-- **Kết quả**: **PASS 100%** (87/87 passed).
+- **Tổng số test suite**: **89 tests** (bao gồm 8 unit tests cho Notification Service).
+- **Kết quả**: **PASS 100%** (89/89 passed).
 
 ```text
 00:00 +0: LocalNotificationService Pure Logic Unit Tests 1. Inactive schedule yields 0 scheduled notifications
@@ -66,8 +66,10 @@ Tài liệu này tổng hợp toàn bộ giải pháp thiết kế, kết quả 
 00:00 +3: LocalNotificationService Pure Logic Unit Tests 4. Deterministic notification ID is generated reproducibly
 00:00 +4: LocalNotificationService Pure Logic Unit Tests 5. Past notification dates before referenceDate are excluded
 00:00 +5: LocalNotificationService Pure Logic Unit Tests 6. Scheduled notification times are explicitly configured for 09:00 AM local time
+00:00 +6: LocalNotificationService Pure Logic Unit Tests 7. Notification payload starts with bill_reminder_v1: prefix
+00:00 +7: LocalNotificationService Pure Logic Unit Tests 8. Total calculated notifications across multiple schedules respects window bounds
 ...
-00:05 +87: All tests passed!
+00:07 +89: All tests passed!
 ```
 
 ---
@@ -78,36 +80,38 @@ Rule `transactions` đã được chỉnh ở ticket sửa permission-denied tr�
 
 ---
 
-## 5. Các Điểm Tối Ưu Quản Lý Notification & Timezone
+## 5. Các Điểm Tối Ưu Quản Lý Notification, Payload & Timezone
 
-1. **Không hủy nhầm notification khác (`syncAllReminders`)**:
-   - `syncAllReminders()` duyệt danh sách pending notifications via `_plugin!.pendingNotificationRequests()` và chỉ hủy các thông báo có payload chứa `scheduleId` (các thông báo thuộc Bill Reminder).
-   - Không gọi `cancelAll()` toàn bộ để tránh xóa các notification khác của app (như cảnh báo ngân sách).
+1. **Lấy Múi Giờ Thiết Bị Thực Tế (`flutter_timezone`)**:
+   - Trong `LocalNotificationService.initialize()`, ứng dụng tự động truy vấn múi giờ thiết bị thực tế bằng `FlutterTimezone.getLocalTimezone()` và gọi `tz.setLocalLocation(tz.getLocation(timeZoneName))` trước khi thực hiện bất kỳ lệnh `zonedSchedule()` nào.
+   - Có try-catch fallback an toàn về `'Asia/Ho_Chi_Minh'` nếu bị từ chối/không hỗ trợ trên một số nền tảng đặc thù.
 
-2. **Chính xác 09:00 AM theo Local Timezone di động**:
-   - Thời gian thông báo được khởi tạo `DateTime(year, month, day, 9, 0)` theo múi giờ thiết bị và chuyển sang Timezone bằng `tz.TZDateTime.from(date, tz.local)`.
-   - Đã được kiểm tra qua Unit Test #6 (`tz.setLocalLocation(tz.getLocation('Asia/Ho_Chi_Minh'))`).
+2. **Định Dạng Payload Chuẩn Với Prefix `bill_reminder_v1:`**:
+   - Mọi notification do Bill Reminder khởi tạo đều có payload dạng `bill_reminder_v1:{"scheduleId": "..."}`.
+   - Các hàm `cancelRemindersForSchedule()` và `syncAllReminders()` chỉ hủy các notification có `req.payload.startsWith('bill_reminder_v1:')`.
+   - **Tuyệt đối không dùng `cancelAll()`** để không vô tình hủy notification của các tính năng khác trong ứng dụng.
 
-3. **Kiểm tra trạng thái quyền tránh spam popup (`requestPermission`)**:
+3. **Kiểm Tra Trạng Thái Quyền Tránh Spam Popup (`requestPermission`)**:
    - Trước khi gọi dialog xin quyền Android, `requestPermission()` kiểm tra `areNotificationsEnabled()`.
    - Nếu quyền đã được cấp, hàm trả về `true` ngay lập tức mà không hiển thị lại popup xin quyền.
 
-4. **Giới hạn 90 ngày & tối đa 50 notifications**:
+4. **Giới Hạn 90 Ngày & Tối Đa 50 Notifications**:
    - Cửa sổ thời gian quét tối đa 90 ngày (`maxDaysAhead = 90`).
-   - Tối đa 50 thông báo lặp cùng lúc (`maxTotalNotifications = 50`) để tránh làm quá tải hệ thống Android.
+   - Tối đa 50 thông báo lặp cùng lúc (`maxTotalNotifications = 50`) để tránh làm quá tải hệ thống Android AlarmManager.
 
 ---
 
 ## 6. Các File Chính & Thư Viện Đã Sử Dụng
 
 ### Packages (`pubspec.yaml`)
-- `flutter_local_notifications: ^18.0.1`
+- `flutter_local_notifications: ^17.2.3`
 - `timezone: ^0.9.4`
+- `flutter_timezone: ^3.0.1`
 
 ### Các File Đã Thêm / Chỉnh Sửa
 
 1. **`lib/services/local_notification_service.dart` (Tạo mới)**:
-   - Core logic khởi tạo, lên lịch, băm ID deterministic, hủy có lọc payload và điều hướng tap notification.
+   - Core logic khởi tạo timezone thiết bị qua `flutter_timezone`, lên lịch, băm ID deterministic, hủy lọc theo prefix `bill_reminder_v1:` và điều hướng tap notification.
 2. **`lib/models/recurring_transaction_model.dart` (Chỉnh sửa)**:
    - Thêm thuộc tính `reminderDaysBefore` (0, 1, 3, 7).
 3. **`lib/screens/management/recurring_transaction_screen.dart` (Chỉnh sửa)**:
@@ -117,7 +121,7 @@ Rule `transactions` đã được chỉnh ở ticket sửa permission-denied tr�
 4. **`lib/routes/app_routes.dart` & `lib/main.dart` (Chỉnh sửa)**:
    - Khởi tạo `navigatorKey` phục vụ chuyển màn hình khi bấm notification.
 5. **`test/local_notification_service_test.dart` (Tạo mới)**:
-   - 6 unit tests kiểm thử logic tính toán notification & timezone 09:00 AM.
+   - 8 unit tests kiểm thử logic tính toán notification, timezone 09:00 AM, prefix payload và giới hạn số lượng.
 
 ---
 
@@ -149,4 +153,4 @@ Rule `transactions` đã được chỉnh ở ticket sửa permission-denied tr�
 
 ---
 
-> **Trạng thái nghiệm thu**: Đã hoàn tất logic code, kiểm thử đơn vị (87/87 PASS) và cập nhật báo cáo theo đúng yêu cầu. Cần thực hiện thử nghiệm trên máy thật theo Mục 7 để điền kết quả thực tế vào Bảng Android Test Matrix.
+> **Trạng thái nghiệm thu**: Đã hoàn tất logic code, commit & push thành công lên branch `main` (`57afcbc287e1800676dfae7ca553ccdbe868629f`), working tree sạch. Cần thực hiện thử nghiệm trên máy thật theo Mục 7 để điền kết quả thực tế vào Bảng Android Test Matrix.
